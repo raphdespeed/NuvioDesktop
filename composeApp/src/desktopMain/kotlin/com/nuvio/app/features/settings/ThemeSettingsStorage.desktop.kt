@@ -1,126 +1,154 @@
 package com.nuvio.app.features.settings
 
-import com.nuvio.app.core.storage.DesktopStorage
-import com.nuvio.app.core.storage.ProfileScopedKey
+import com.nuvio.app.core.storage.DesktopPreferences
+import java.util.Locale
 import com.nuvio.app.core.sync.decodeSyncBoolean
 import com.nuvio.app.core.sync.decodeSyncString
 import com.nuvio.app.core.sync.encodeSyncBoolean
 import com.nuvio.app.core.sync.encodeSyncString
+import com.nuvio.app.core.storage.ProfileScopedKey
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.util.Locale
 
-internal fun resolveDesktopAppLocale(
-    languageCode: String,
-    deviceLocale: Locale,
-): Locale = if (languageCode.equals(AppLanguage.DEVICE.code, ignoreCase = true)) {
-    deviceLocale
-} else {
-    Locale.forLanguageTag(languageCode)
-}
-
-internal actual object ThemeSettingsStorage {
+actual object ThemeSettingsStorage {
+    private const val preferencesName = "nuvio_theme_settings"
     private const val selectedThemeKey = "selected_theme"
-    private const val customThemeColorsKey = "custom_theme_colors"
+    private const val customThemeFirstColorKey = "custom_theme_first_color"
+    private const val customThemeSecondColorKey = "custom_theme_second_color"
     private const val amoledEnabledKey = "amoled_enabled"
     private const val liquidGlassNativeTabBarEnabledKey = "liquid_glass_native_tab_bar_enabled"
-    private const val desktopNavigationLayoutKey = "desktop_navigation_layout"
+    private const val liquidGlassAutoHideOnScrollEnabledKey = "liquid_glass_auto_hide_on_scroll_enabled"
     private const val selectedAppLanguageKey = "selected_app_language"
-    private const val navBarStyleKey = "nav_bar_style"
-    private const val navBarGlowEnabledKey = "nav_bar_glow_enabled"
+    private const val NAV_BAR_STYLE_KEY = "nav_bar_style"
     private val profileScopedSyncKeys = listOf(
         selectedThemeKey,
-        customThemeColorsKey,
+        customThemeFirstColorKey,
+        customThemeSecondColorKey,
         amoledEnabledKey,
         liquidGlassNativeTabBarEnabledKey,
-        desktopNavigationLayoutKey,
-        navBarStyleKey,
-        navBarGlowEnabledKey,
+        liquidGlassAutoHideOnScrollEnabledKey,
     )
-    private val deviceLocale = Locale.getDefault()
-    private val store = DesktopStorage.store("nuvio_theme_settings")
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+    private val deviceLocale=Locale.getDefault()
+
+
 
     actual fun loadSelectedTheme(): String? =
-        store.getString(ProfileScopedKey.of(selectedThemeKey))
+        preferences?.getString(ProfileScopedKey.of(selectedThemeKey), null)
 
     actual fun saveSelectedTheme(themeName: String) {
-        store.putString(ProfileScopedKey.of(selectedThemeKey), themeName)
+        preferences
+            ?.edit()
+            ?.putString(ProfileScopedKey.of(selectedThemeKey), themeName)
+            ?.apply()
     }
 
-    actual fun loadCustomThemeColors(): String? =
-        store.getString(ProfileScopedKey.of(customThemeColorsKey))
+    actual fun loadCustomThemeFirstColor(): String? =
+        preferences?.getString(ProfileScopedKey.of(customThemeFirstColorKey), null)
 
-    actual fun saveCustomThemeColors(colors: String) {
-        store.putString(ProfileScopedKey.of(customThemeColorsKey), colors)
+    actual fun saveCustomThemeFirstColor(colorName: String) {
+        preferences?.edit()?.putString(ProfileScopedKey.of(customThemeFirstColorKey), colorName)?.apply()
+    }
+
+    actual fun loadCustomThemeSecondColor(): String? =
+        preferences?.getString(ProfileScopedKey.of(customThemeSecondColorKey), null)
+
+    actual fun saveCustomThemeSecondColor(colorName: String) {
+        preferences?.edit()?.putString(ProfileScopedKey.of(customThemeSecondColorKey), colorName)?.apply()
     }
 
     actual fun loadAmoledEnabled(): Boolean? =
-        store.getBoolean(ProfileScopedKey.of(amoledEnabledKey))
+        preferences?.let { prefs ->
+            val key = ProfileScopedKey.of(amoledEnabledKey)
+            if (prefs.contains(key)) prefs.getBoolean(key, false) else null
+        }
 
     actual fun saveAmoledEnabled(enabled: Boolean) {
-        store.putBoolean(ProfileScopedKey.of(amoledEnabledKey), enabled)
+        preferences
+            ?.edit()
+            ?.putBoolean(ProfileScopedKey.of(amoledEnabledKey), enabled)
+            ?.apply()
     }
 
     actual fun loadLiquidGlassNativeTabBarEnabled(): Boolean? =
-        store.getBoolean(ProfileScopedKey.of(liquidGlassNativeTabBarEnabledKey))
+        preferences?.let { prefs ->
+            val key = ProfileScopedKey.of(liquidGlassNativeTabBarEnabledKey)
+            if (prefs.contains(key)) prefs.getBoolean(key, false) else null
+        }
 
     actual fun saveLiquidGlassNativeTabBarEnabled(enabled: Boolean) {
-        store.putBoolean(ProfileScopedKey.of(liquidGlassNativeTabBarEnabledKey), enabled)
+        preferences
+            ?.edit()
+            ?.putBoolean(ProfileScopedKey.of(liquidGlassNativeTabBarEnabledKey), enabled)
+            ?.apply()
     }
 
-    actual fun loadDesktopNavigationLayout(): String? =
-        store.getString(ProfileScopedKey.of(desktopNavigationLayoutKey))
+    actual fun loadLiquidGlassAutoHideOnScrollEnabled(): Boolean? =
+        preferences?.let { prefs ->
+            val key = ProfileScopedKey.of(liquidGlassAutoHideOnScrollEnabledKey)
+            if (prefs.contains(key)) prefs.getBoolean(key, false) else null
+        }
 
-    actual fun saveDesktopNavigationLayout(layoutName: String) {
-        store.putString(ProfileScopedKey.of(desktopNavigationLayoutKey), layoutName)
+    actual fun saveLiquidGlassAutoHideOnScrollEnabled(enabled: Boolean) {
+        preferences
+            ?.edit()
+            ?.putBoolean(ProfileScopedKey.of(liquidGlassAutoHideOnScrollEnabledKey), enabled)
+            ?.apply()
     }
 
-    actual fun loadSelectedAppLanguage(): String? =
-        store.getString(selectedAppLanguageKey)
-            ?: Locale.getDefault().toLanguageTag().takeIf { it.isNotBlank() }
+    actual fun loadSelectedAppLanguage(): String? {
+        val value = preferences?.getString(selectedAppLanguageKey, null)
+        if (value != null) return value
+        val legacy = preferences?.getString(ProfileScopedKey.of(selectedAppLanguageKey), null)
+        if (legacy != null) saveSelectedAppLanguage(legacy)
+        return legacy
+    }
 
     actual fun saveSelectedAppLanguage(languageCode: String) {
-        store.putString(selectedAppLanguageKey, languageCode)
+        preferences
+            ?.edit()
+            ?.putString(selectedAppLanguageKey, languageCode)
+            ?.apply()
     }
 
     actual fun applySelectedAppLanguage(languageCode: String) {
-        Locale.setDefault(resolveDesktopAppLocale(languageCode, deviceLocale))
+        Locale.setDefault(if(languageCode.equals("device",true))deviceLocale else Locale.forLanguageTag(languageCode))
     }
 
     actual fun loadNavBarStyle(): String? =
-        store.getString(ProfileScopedKey.of(navBarStyleKey))
+        preferences?.getString(ProfileScopedKey.of(NAV_BAR_STYLE_KEY), null)
 
     actual fun saveNavBarStyle(styleKey: String) {
-        store.putString(ProfileScopedKey.of(navBarStyleKey), styleKey)
-    }
-
-    actual fun loadNavBarGlowEnabled(): Boolean? =
-        store.getBoolean(ProfileScopedKey.of(navBarGlowEnabledKey))
-
-    actual fun saveNavBarGlowEnabled(enabled: Boolean) {
-        store.putBoolean(ProfileScopedKey.of(navBarGlowEnabledKey), enabled)
+        preferences
+            ?.edit()
+            ?.putString(ProfileScopedKey.of(NAV_BAR_STYLE_KEY), styleKey)
+            ?.apply()
     }
 
     actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
         loadSelectedTheme()?.let { put(selectedThemeKey, encodeSyncString(it)) }
-        loadCustomThemeColors()?.let { put(customThemeColorsKey, encodeSyncString(it)) }
+        loadCustomThemeFirstColor()?.let { put(customThemeFirstColorKey, encodeSyncString(it)) }
+        loadCustomThemeSecondColor()?.let { put(customThemeSecondColorKey, encodeSyncString(it)) }
         loadAmoledEnabled()?.let { put(amoledEnabledKey, encodeSyncBoolean(it)) }
         loadLiquidGlassNativeTabBarEnabled()?.let { put(liquidGlassNativeTabBarEnabledKey, encodeSyncBoolean(it)) }
-        loadDesktopNavigationLayout()?.let { put(desktopNavigationLayoutKey, encodeSyncString(it)) }
-        loadNavBarStyle()?.let { put(navBarStyleKey, encodeSyncString(it)) }
-        loadNavBarGlowEnabled()?.let { put(navBarGlowEnabledKey, encodeSyncBoolean(it)) }
+        loadLiquidGlassAutoHideOnScrollEnabled()?.let { put(liquidGlassAutoHideOnScrollEnabledKey, encodeSyncBoolean(it)) }
+        loadNavBarStyle()?.let { put(NAV_BAR_STYLE_KEY, encodeSyncString(it)) }
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
-        store.removeAll(profileScopedSyncKeys.map(ProfileScopedKey::of))
+        preferences?.edit()?.apply {
+            profileScopedSyncKeys.forEach { remove(ProfileScopedKey.of(it)) }
+        }?.apply()
+
         payload.decodeSyncString(selectedThemeKey)?.let(::saveSelectedTheme)
-        payload.decodeSyncString(customThemeColorsKey)?.let(::saveCustomThemeColors)
+        payload.decodeSyncString(customThemeFirstColorKey)?.let(::saveCustomThemeFirstColor)
+        payload.decodeSyncString(customThemeSecondColorKey)?.let(::saveCustomThemeSecondColor)
         payload.decodeSyncBoolean(amoledEnabledKey)?.let(::saveAmoledEnabled)
         payload.decodeSyncBoolean(liquidGlassNativeTabBarEnabledKey)?.let(::saveLiquidGlassNativeTabBarEnabled)
-        payload.decodeSyncString(desktopNavigationLayoutKey)?.let(::saveDesktopNavigationLayout)
-        payload.decodeSyncString(navBarStyleKey)?.let(::saveNavBarStyle)
-        payload.decodeSyncBoolean(navBarGlowEnabledKey)?.let(::saveNavBarGlowEnabled)
-        applySelectedAppLanguage(loadSelectedAppLanguage() ?: AppLanguage.ENGLISH.code)
+        payload.decodeSyncBoolean(liquidGlassAutoHideOnScrollEnabledKey)?.let(::saveLiquidGlassAutoHideOnScrollEnabled)
+        payload.decodeSyncString(NAV_BAR_STYLE_KEY)?.let(::saveNavBarStyle)
+        applySelectedAppLanguage(loadSelectedAppLanguage() ?: AppLanguage.DEVICE.code)
     }
 }

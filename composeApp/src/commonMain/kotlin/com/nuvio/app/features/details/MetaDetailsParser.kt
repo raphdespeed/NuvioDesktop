@@ -8,7 +8,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -28,27 +27,27 @@ internal object MetaDetailsParser {
         val meta = root.extractMetaObject()
             ?: error("Response did not contain a valid meta object")
         val links = meta.links()
-        val videos = meta.videos()
 
         return MetaDetails(
             id = meta.requiredString("id"),
             type = meta.requiredString("type"),
             name = meta.requiredString("name"),
-            imdbId = meta.string("imdb_id"),
             poster = meta.string("poster"),
-            background = meta.string("background") ?: meta.string("landscapePoster")?.takeIf(String::isNotBlank),
+            background = meta.string("background"),
             logo = meta.string("logo"),
-            description = meta.string("description"),
+            description = meta.string("description") ?: meta.string("overview"),
             releaseInfo = meta.string("releaseInfo"),
             lastAirDate = meta.string("lastAirDate"),
             status = meta.string("status"),
             imdbRating = meta.string("imdbRating"),
-            ageRating = meta.ageRating(),
+            ageRating = meta.string("ageRating"),
             runtime = meta.string("runtime"),
             genres = meta.stringList("genres"),
             director = meta.directors(links),
             writer = meta.writers(links),
             cast = meta.cast(links),
+            productionCompanies = meta.companies("productionCompanies", "production_companies"),
+            networks = meta.companies("networks"),
             country = meta.string("country"),
             awards = meta.string("awards"),
             language = meta.string("language"),
@@ -57,8 +56,7 @@ internal object MetaDetailsParser {
             defaultVideoId = meta.behaviorHints().string("defaultVideoId"),
             trailers = meta.trailers(),
             links = links,
-            seasonPosters = meta.seasonPosters(videos),
-            videos = videos,
+            videos = meta.videos(),
         )
     }
 
@@ -99,6 +97,59 @@ internal object MetaDetailsParser {
     private fun JsonObject.int(name: String): Int? =
         this[name]?.jsonPrimitive?.intOrNull
 
+    private fun JsonObject.companies(vararg names: String): List<MetaCompany> {
+        val appExtras = this["app_extras"] as? JsonObject
+        return names
+            .flatMap { name -> companyList(name) + appExtras.companyList(name) }
+            .distinctBy { company -> company.name.trim().lowercase() }
+    }
+
+    private fun JsonObject?.companyList(name: String): List<MetaCompany> {
+        val value = this?.get(name) ?: return emptyList()
+        return when (value) {
+            is JsonArray -> value.mapNotNull { element ->
+                when (element) {
+                    is JsonObject -> {
+                        val companyName = element.string("name")?.trim()?.takeIf(String::isNotBlank)
+                            ?: return@mapNotNull null
+                        val rawLogo = listOf("logo", "logoUrl", "logo_url", "logo_path")
+                            .firstNotNullOfOrNull { field -> element.string(field) }
+                        val tmdbId = element.int("tmdbId")
+                            ?: element.int("tmdb_id")
+                            ?: element.int("id")
+                            ?: element.string("id")?.toIntOrNull()
+                        MetaCompany(
+                            name = companyName,
+                            logo = rawLogo?.normalizeCompanyLogo(),
+                            tmdbId = tmdbId,
+                        )
+                    }
+                    is JsonPrimitive -> element.contentOrNull
+                        ?.trim()
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(::MetaCompany)
+                    else -> null
+                }
+            }
+            is JsonPrimitive -> value.contentOrNull
+                ?.split(',')
+                ?.map(String::trim)
+                ?.filter(String::isNotBlank)
+                ?.map(::MetaCompany)
+                .orEmpty()
+            else -> emptyList()
+        }
+    }
+
+    private fun String.normalizeCompanyLogo(): String? {
+        val logo = trim().takeIf(String::isNotBlank) ?: return null
+        return if (logo.startsWith('/')) {
+            "https://image.tmdb.org/t/p/w300$logo"
+        } else {
+            logo
+        }
+    }
+
     private fun JsonObject.boolean(name: String): Boolean? =
         this[name]?.jsonPrimitive?.booleanOrNull
 
@@ -118,17 +169,6 @@ internal object MetaDetailsParser {
 
     private fun JsonObject.looksLikeMetaObject(): Boolean =
         string("id") != null && string("type") != null && string("name") != null
-
-    private fun JsonObject.ageRating(): String? {
-        val appExtras = this["app_extras"] as? JsonObject
-        return listOf(
-            string("ageRating"),
-            appExtras?.string("certificationLocal"),
-            appExtras?.string("certification"),
-        ).firstNotNullOfOrNull { value ->
-            value?.trim()?.takeIf(String::isNotBlank)
-        }
-    }
 
     private fun JsonObject.directors(links: List<MetaLink>): List<String> {
         val appExtras = this["app_extras"] as? JsonObject
@@ -249,51 +289,11 @@ internal object MetaDetailsParser {
                 season = video.int("season"),
                 episode = video.int("episode"),
                 overview = video.string("overview") ?: video.string("description"),
-                runtime = parseRuntimeMinutes((video["runtime"] as? JsonPrimitive)?.contentOrNull),
+                runtime = video.int("runtime"),
                 rating = video.string("rating")?.trim()?.toDoubleOrNull()?.takeIf { it > 0.0 },
                 streams = video.embeddedStreams(),
             )
         }
-
-    private fun JsonObject.seasonPosters(videos: List<MetaVideo>): Map<Int, String> {
-        val appExtras = this["app_extras"] as? JsonObject ?: return emptyMap()
-        val keyed = parseKeyedSeasonPosters(appExtras["seasonPosters"])
-            .ifEmpty { parseKeyedSeasonPosters(appExtras["seasonPosterByNumber"]) }
-        if (keyed.isNotEmpty()) return keyed
-
-        val posters = appExtras["seasonPosters"] as? JsonArray ?: return emptyMap()
-        val seasons = videos
-            .mapNotNull(MetaVideo::season)
-            .filter { it >= SPECIALS_SEASON_NUMBER }
-            .distinct()
-            .sorted()
-        val positiveSeasons = seasons.filter { it > SPECIALS_SEASON_NUMBER }
-        val posterSeasons = when {
-            seasons.size == posters.size -> seasons
-            positiveSeasons.size == posters.size -> positiveSeasons
-            positiveSeasons.isNotEmpty() &&
-                posters.size == positiveSeasons.size + 1 &&
-                posters.firstOrNull() == JsonNull -> listOf(SPECIALS_SEASON_NUMBER) + positiveSeasons
-            else -> List(posters.size) { index -> index + 1 }
-        }
-        return posters.mapIndexedNotNull { index, element ->
-            (element as? JsonPrimitive)?.contentOrNull
-                ?.trim()
-                ?.takeIf(String::isNotBlank)
-                ?.let { posterSeasons[index] to it }
-        }.toMap()
-    }
-
-    private fun parseKeyedSeasonPosters(element: JsonElement?): Map<Int, String> {
-        val posters = element as? JsonObject ?: return emptyMap()
-        return posters.entries.mapNotNull { (key, value) ->
-            val season = key.toIntOrNull() ?: return@mapNotNull null
-            (value as? JsonPrimitive)?.contentOrNull
-                ?.trim()
-                ?.takeIf(String::isNotBlank)
-                ?.let { season to it }
-        }.toMap()
-    }
 
     private fun JsonObject.trailers(): List<MetaTrailer> =
         array("trailers").mapNotNull { element ->

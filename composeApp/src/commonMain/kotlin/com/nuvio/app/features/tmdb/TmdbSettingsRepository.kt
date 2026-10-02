@@ -1,8 +1,7 @@
 package com.nuvio.app.features.tmdb
 
-import com.nuvio.app.features.details.MetaDetailsRepository
-import com.nuvio.app.features.profiles.ProfileRepository
-import com.nuvio.app.features.watchprogress.ContinueWatchingEnrichmentCache
+import com.nuvio.app.core.time.EpisodeReleaseDatePlatform
+import com.nuvio.app.features.player.DeviceLanguagePreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +19,7 @@ object TmdbSettingsRepository {
     private var useArtwork = true
     private var useBasicInfo = true
     private var useDetails = true
+    private var useReleaseDates = false
     private var useCredits = true
     private var useProductions = true
     private var useNetworks = true
@@ -42,10 +42,9 @@ object TmdbSettingsRepository {
         return _uiState.value
     }
 
-    fun effectiveApiKey(): String = snapshot().apiKey.ifBlank { TmdbConfig.API_KEY }
-
     fun setEnabled(value: Boolean) {
         ensureLoaded()
+        if (value && apiKey.isBlank()) return
         if (enabled == value) return
         enabled = value
         publish()
@@ -57,9 +56,12 @@ object TmdbSettingsRepository {
         val normalized = value.trim()
         if (apiKey == normalized) return
         apiKey = normalized
+        if (apiKey.isBlank()) {
+            enabled = false
+            TmdbSettingsStorage.saveEnabled(false)
+        }
         publish()
-        TmdbSettingsStorage.saveApiKey(normalized)
-        invalidateMetadata()
+        TmdbSettingsStorage.saveApiKey(normalized, EpisodeReleaseDatePlatform.nowEpochMs())
     }
 
     fun setLanguage(value: String) {
@@ -97,6 +99,13 @@ object TmdbSettingsRepository {
         next = value,
         update = { useDetails = it },
         persist = TmdbSettingsStorage::saveUseDetails,
+    )
+
+    fun setUseReleaseDates(value: Boolean) = setBoolean(
+        current = useReleaseDates,
+        next = value,
+        update = { useReleaseDates = it },
+        persist = TmdbSettingsStorage::saveUseReleaseDates,
     )
 
     fun setUseCredits(value: Boolean) = setBoolean(
@@ -162,17 +171,21 @@ object TmdbSettingsRepository {
     }
 
     private fun loadFromDisk() {
-        val wasLoaded = hasLoaded
-        val previousApiKey = apiKey
         hasLoaded = true
-        enabled = TmdbSettingsStorage.loadEnabled() ?: false
         apiKey = TmdbSettingsStorage.loadApiKey()?.trim().orEmpty()
+        if (apiKey.isNotBlank() && TmdbSettingsStorage.loadApiKeyUpdatedAtEpochMs() == null) {
+            TmdbSettingsStorage.saveApiKey(apiKey, EpisodeReleaseDatePlatform.nowEpochMs())
+        }
+        enabled = (TmdbSettingsStorage.loadEnabled() ?: false) && apiKey.isNotBlank()
         val storedLanguage = TmdbSettingsStorage.loadLanguage()
-        language = if (storedLanguage == null) "en" else normalizeLanguage(storedLanguage)
+        language = storedLanguage?.let(::normalizeLanguage)
+            ?.takeIf(String::isNotBlank)
+            ?: defaultTmdbLanguage()
         useTrailers = TmdbSettingsStorage.loadUseTrailers() ?: true
         useArtwork = TmdbSettingsStorage.loadUseArtwork() ?: true
         useBasicInfo = TmdbSettingsStorage.loadUseBasicInfo() ?: true
         useDetails = TmdbSettingsStorage.loadUseDetails() ?: true
+        useReleaseDates = TmdbSettingsStorage.loadUseReleaseDates() ?: false
         useCredits = TmdbSettingsStorage.loadUseCredits() ?: true
         useProductions = TmdbSettingsStorage.loadUseProductions() ?: true
         useNetworks = TmdbSettingsStorage.loadUseNetworks() ?: true
@@ -181,9 +194,6 @@ object TmdbSettingsRepository {
         useMoreLikeThis = TmdbSettingsStorage.loadUseMoreLikeThis() ?: true
         useCollections = TmdbSettingsStorage.loadUseCollections() ?: true
         publish()
-        if (wasLoaded && previousApiKey != apiKey) {
-            invalidateMetadata()
-        }
     }
 
     private fun publish() {
@@ -195,6 +205,7 @@ object TmdbSettingsRepository {
             useArtwork = useArtwork,
             useBasicInfo = useBasicInfo,
             useDetails = useDetails,
+            useReleaseDates = useReleaseDates,
             useCredits = useCredits,
             useProductions = useProductions,
             useNetworks = useNetworks,
@@ -205,9 +216,9 @@ object TmdbSettingsRepository {
         )
     }
 
-    private fun invalidateMetadata() {
-        MetaDetailsRepository.clear()
-        ContinueWatchingEnrichmentCache.clearAll(ProfileRepository.activeProfileId)
+    private fun defaultTmdbLanguage(): String {
+        val preferred = DeviceLanguagePreferences.preferredLanguageCodes().firstOrNull()
+        return normalizeLanguage(preferred).ifBlank { "en" }
     }
 }
 

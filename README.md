@@ -1,3 +1,15 @@
+# Nuvio Speedy — Windows
+
+Version de test Windows du portage Nuvio Speedy mobile : **0.4.15-speedy (119)**.
+
+[Télécharger l'installateur Windows x64](https://github.com/raphdespeed/NuvioDesktop/releases/download/v0.4.15-speedy-windows.1/Nuvio-Speedy-Windows-x64.exe) · [Notes et fichiers de la version](https://github.com/raphdespeed/NuvioDesktop/releases/tag/v0.4.15-speedy-windows.1)
+
+Cette version reprend les écrans et fonctions communes Speedy, dont la TV en direct, les guides EPG, les réglages IA, les fournisseurs portables CloudStream et les sauvegardes. Le lecteur et les fenêtres de choix de fichiers utilisent les composants Windows.
+
+Les extensions CloudStream Android DEX sont incompatibles avec Windows. Certains réglages avancés du lecteur, dont les polices personnalisées et les superpositions, restent à adapter ou à valider. Les intégrations externes nécessitent leur configuration et n'ont pas toutes été testées avec un compte réel.
+
+Voir [les adaptations et la compilation Windows](SPEEDY_WINDOWS.md). Les informations ci-dessous concernent le projet Nuvio Desktop d'origine.
+
 <div align="center">
 
   <img src="composeApp/src/commonMain/composeResources/drawable/app_logo_wordmark.png" alt="Nuvio" width="300" />

@@ -1,22 +1,68 @@
 package com.nuvio.app.features.player.skip
 
 import com.nuvio.app.features.details.MetaVideo
+import kotlin.random.Random
 
 object PlayerNextEpisodeRules {
+    private const val RANDOM_HISTORY_LIMIT = 8
+    private val randomEpisodeHistory = mutableMapOf<String, ArrayDeque<String>>()
 
     fun resolveNextEpisode(
         videos: List<MetaVideo>,
         currentSeason: Int?,
         currentEpisode: Int?,
+        randomMode: Boolean = false,
+        randomHistoryKey: String? = null,
     ): MetaVideo? {
-        if (currentSeason == null || currentEpisode == null) return null
         val sortedEpisodes = videos
-            .filter { it.season != null && it.episode != null }
+            .filter { (it.season ?: 0) > 0 && it.episode != null }
             .sortedWith(
                 compareBy<MetaVideo> { it.season ?: Int.MAX_VALUE }
                     .thenBy { it.episode ?: Int.MAX_VALUE }
             )
 
+        if (sortedEpisodes.isEmpty()) return null
+
+        if (randomMode) {
+            val currentIndex = if (currentSeason != null && currentEpisode != null) {
+                sortedEpisodes.indexOfFirst {
+                    it.season == currentSeason && it.episode == currentEpisode
+                }
+            } else {
+                -1
+            }
+            val currentEpisodeItem = sortedEpisodes.getOrNull(currentIndex)
+            val airedCandidates = sortedEpisodes.filter { hasEpisodeAired(it.released) }
+            val candidates = airedCandidates
+                .filterNot { episode ->
+                    currentEpisodeItem != null && episode.season == currentEpisodeItem.season && episode.episode == currentEpisodeItem.episode
+                }
+                .ifEmpty { airedCandidates.ifEmpty { sortedEpisodes } }
+
+            if (candidates.size == 1) return candidates.first()
+            val historyKey = randomHistoryKey?.takeIf { it.isNotBlank() } ?: "global"
+            val recent = randomEpisodeHistory.getOrPut(historyKey) { ArrayDeque() }
+            val freshCandidates = candidates
+                .filterNot { episode -> episode.randomEpisodeKey() in recent }
+                .ifEmpty {
+                    if (candidates.size > 2 && recent.isNotEmpty()) {
+                        recent.removeFirst()
+                        candidates.filterNot { episode -> episode.randomEpisodeKey() in recent }
+                    } else {
+                        candidates
+                    }
+                }
+                .ifEmpty { candidates }
+
+            val selected = freshCandidates[Random.nextInt(freshCandidates.size)]
+            recent.addLast(selected.randomEpisodeKey())
+            while (recent.size > RANDOM_HISTORY_LIMIT) {
+                recent.removeFirst()
+            }
+            return selected
+        }
+
+        if (currentSeason == null || currentEpisode == null) return null
         val currentIndex = sortedEpisodes.indexOfFirst {
             it.season == currentSeason && it.episode == currentEpisode
         }
@@ -36,21 +82,6 @@ object PlayerNextEpisodeRules {
 
         if (outroSegments.isNotEmpty()) {
             if (durationMs <= 0L) return false
-
-            // Use the same post-credits detection as the skip button so the
-            // next-episode card never appears over a post-credits scene.
-            val latestOutro = outroSegments.maxByOrNull { it.endTime }
-            val postCreditsScene = latestOutro?.findFollowingPostCreditsScene(skipIntervals, durationMs)
-
-            if (postCreditsScene != null) {
-                val sceneEndMs = (postCreditsScene.endTime * 1_000.0).toLong()
-                    .coerceAtMost(durationMs)
-                val userTriggerMs = userThresholdPositionMs(
-                    durationMs, thresholdMode, thresholdPercent, thresholdMinutesBeforeEnd
-                )
-                return positionMs >= maxOf(sceneEndMs, userTriggerMs)
-            }
-
             val latestOutroEndMs = (outroSegments.maxOf { it.endTime } * 1_000.0).toLong()
             val postOutroGapMs = durationMs - latestOutroEndMs
 
@@ -127,50 +158,8 @@ object PlayerNextEpisodeRules {
 
     val OUTRO_SEGMENT_TYPES = setOf("outro", "ed", "mixed-ed")
 
-    private const val POST_CREDITS_GAP_MS = 5_000L
-
-    private fun SkipInterval.findFollowingPostCreditsScene(
-        intervals: List<SkipInterval>,
-        durationMs: Long,
-    ): SkipInterval? {
-        if (type !in OUTRO_SEGMENT_TYPES) return null
-        val explicit = intervals.filter {
-            it.type.trim().lowercase() == "post-credits" &&
-                it.startTime.isFinite() && it.endTime.isFinite() &&
-                it.startTime >= endTime && it.endTime > it.startTime &&
-                (durationMs <= 0L || it.startTime * 1000.0 < durationMs)
-        }.minByOrNull { it.startTime }
-        if (explicit != null) return explicit
-        if (durationMs > 0L) {
-            val creditsEndMs = (endTime * 1000.0).toLong()
-            val gapMs = durationMs - creditsEndMs
-            if (gapMs > POST_CREDITS_GAP_MS) {
-                return SkipInterval(
-                    startTime = endTime,
-                    endTime = durationMs / 1000.0,
-                    type = "post-credits",
-                    provider = "heuristic",
-                )
-            }
-        }
-        return null
-    }
-
-    private fun userThresholdPositionMs(
-        durationMs: Long,
-        thresholdMode: NextEpisodeThresholdMode,
-        thresholdPercent: Float,
-        thresholdMinutesBeforeEnd: Float,
-    ): Long = when (thresholdMode) {
-        NextEpisodeThresholdMode.PERCENTAGE -> {
-            val clampedPercent = thresholdPercent.coerceIn(97f, 100f)
-            kotlin.math.ceil(durationMs * (clampedPercent / 100.0)).toLong()
-        }
-        NextEpisodeThresholdMode.MINUTES_BEFORE_END -> {
-            val clampedMinutes = thresholdMinutesBeforeEnd.coerceIn(0f, 3.5f)
-            durationMs - (clampedMinutes * 60_000f).toLong()
-        }
-    }
+    private fun MetaVideo.randomEpisodeKey(): String =
+        "${season ?: -1}x${episode ?: -1}:${id}"
 }
 
 internal expect fun currentDateComponents(): DateComponents

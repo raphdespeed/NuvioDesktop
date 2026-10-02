@@ -3,29 +3,25 @@ package com.nuvio.app.features.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerButton
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.isTvLayoutProfileEnabled
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.addons.AddonRepository
-import com.nuvio.app.isDesktop
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
+import com.nuvio.app.features.settings.NuvioSpeedySettingsRepository
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import nuvio.composeapp.generated.resources.Res
@@ -33,7 +29,6 @@ import nuvio.composeapp.generated.resources.compose_player_airs_prefix
 import nuvio.composeapp.generated.resources.compose_player_downloaded
 import nuvio.composeapp.generated.resources.compose_player_resize_fill
 import nuvio.composeapp.generated.resources.compose_player_resize_fit
-import nuvio.composeapp.generated.resources.compose_player_resize_stretch
 import nuvio.composeapp.generated.resources.compose_player_resize_zoom
 import nuvio.composeapp.generated.resources.generic_unknown
 import nuvio.composeapp.generated.resources.parental_alcohol
@@ -47,12 +42,17 @@ import nuvio.composeapp.generated.resources.parental_violence
 import nuvio.composeapp.generated.resources.compose_player_tba
 import org.jetbrains.compose.resources.stringResource
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun PlayerScreenContent(args: PlayerScreenArgs) {
+    LockPlayerToLandscape()
+
     val playerSettingsUiState by remember {
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val nuvioSpeedySettingsUiState by remember {
+        NuvioSpeedySettingsRepository.ensureLoaded()
+        NuvioSpeedySettingsRepository.uiState
     }.collectAsStateWithLifecycle()
     val p2pSettingsUiState by remember {
         P2pSettingsRepository.ensureLoaded()
@@ -84,30 +84,26 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
     BoxWithConstraints(
         modifier = args.modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) {
-                            if (event.button == PointerButton.Back) {
-                                event.changes.forEach { it.consume() }
-                            } else if (event.button == PointerButton.Forward) {
-                                event.changes.forEach { it.consume() }
-                            }
-                        }
-                    }
-                }
-            },
+            .background(Color.Black),
     ) {
         val density = LocalDensity.current
         val horizontalSafePadding = playerHorizontalSafePadding()
-        val metrics = remember(maxWidth) { PlayerLayoutMetrics.fromWidth(maxWidth) }
+        val useTvLayout = isTvLayoutProfileEnabled()
+        val metrics = remember(maxWidth, maxHeight, useTvLayout) {
+            PlayerLayoutMetrics.fromWidth(maxWidth, tvLayout = useTvLayout, height = maxHeight)
+        }
+        val tvTextScale = when {
+            !useTvLayout -> 1f
+            maxWidth >= 1440.dp || maxHeight >= 900.dp -> 1.4f
+            maxWidth >= 1024.dp || maxHeight >= 720.dp -> 1.3f
+            else -> 1.2f
+        }
 
         runtime.scope = rememberCoroutineScope()
         runtime.hapticFeedback = LocalHapticFeedback.current
         runtime.gestureController = rememberPlayerGestureController()
         runtime.playerSettingsUiState = playerSettingsUiState
+        runtime.nuvioSpeedySettingsUiState = nuvioSpeedySettingsUiState
         runtime.p2pSettingsUiState = p2pSettingsUiState
         runtime.p2pStreamingState = p2pStreamingState
         runtime.metaScreenSettingsUiState = metaScreenSettingsUiState
@@ -117,24 +113,18 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         runtime.episodeStreamsRepoState = episodeStreamsRepoState
         runtime.metaUiState = metaUiState
         runtime.addonsUiState = addonsUiState
-        runtime.addonSubtitles = mergeStreamAndAddonSubtitles(addonSubtitles, runtime.externalSubtitles)
+        runtime.addonSubtitles = addonSubtitles
         runtime.isLoadingAddonSubtitles = isLoadingAddonSubtitles
         runtime.horizontalSafePadding = horizontalSafePadding
         runtime.metrics = metrics
         runtime.sliderEdgePadding = horizontalSafePadding + metrics.horizontalPadding
-        runtime.overlayBottomPadding = if (isDesktop || playerSettingsUiState.useLegacyPlayerLayout) {
-            sliderOverlayBottomPadding(metrics)
-        } else {
-            playerTimelineBottomInsets(metrics).asPaddingValues().calculateBottomPadding() +
-                72.dp + PlayerSliderOverlayGap
-        }
+        runtime.overlayBottomPadding = sliderOverlayBottomPadding(metrics)
         runtime.sideGestureSystemEdgeExclusionPx = with(density) {
             PlayerSideGestureSystemEdgeExclusion.toPx()
         }
         runtime.resizeModeFitLabel = stringResource(Res.string.compose_player_resize_fit)
         runtime.resizeModeFillLabel = stringResource(Res.string.compose_player_resize_fill)
         runtime.resizeModeZoomLabel = stringResource(Res.string.compose_player_resize_zoom)
-        runtime.resizeModeStretchLabel = stringResource(Res.string.compose_player_resize_stretch)
         runtime.downloadedLabel = stringResource(Res.string.compose_player_downloaded)
         runtime.airsPrefix = stringResource(Res.string.compose_player_airs_prefix)
         runtime.tbaLabel = stringResource(Res.string.compose_player_tba)
@@ -155,10 +145,9 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
                 args.parentMetaId,
             )?.videos ?: emptyList()
         }
-        val settingsResizeMode = playerSettingsUiState.resizeMode.supportedOnCurrentPlatform()
-        if (runtime.lastSyncedSettingsResizeMode != settingsResizeMode) {
-            runtime.resizeMode = settingsResizeMode
-            runtime.lastSyncedSettingsResizeMode = settingsResizeMode
+        if (runtime.lastSyncedSettingsResizeMode != playerSettingsUiState.resizeMode) {
+            runtime.resizeMode = playerSettingsUiState.resizeMode
+            runtime.lastSyncedSettingsResizeMode = playerSettingsUiState.resizeMode
         }
         runtime.resetIdentityStateIfNeeded()
 
@@ -168,12 +157,13 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         EnterImmersivePlayerMode(keepScreenAwake = keepScreenAwake)
         ManagePlayerPictureInPicture(
             isPlaying = runtime.playbackSnapshot.isPlaying,
-            videoSize = IntSize(
-                runtime.playbackSnapshot.videoWidth,
-                runtime.playbackSnapshot.videoHeight,
-            ),
+            videoSize = runtime.layoutSize,
         )
         runtime.BindPlayerRuntimeEffects()
-        runtime.RenderPlayerRuntimeUi()
+        CompositionLocalProvider(
+            LocalDensity provides Density(density.density, density.fontScale * tvTextScale),
+        ) {
+            runtime.RenderPlayerRuntimeUi()
+        }
     }
 }

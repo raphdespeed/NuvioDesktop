@@ -1,20 +1,27 @@
 package com.nuvio.app.features.simkl
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 import com.nuvio.app.core.storage.ProfileScopedKey
 
 internal actual object SimklSyncStorage {
-    private const val payloadKey = "simkl_sync_snapshot"
-    private val store = DesktopStorage.store("nuvio_simkl_sync")
+    private const val PREFERENCES_NAME = "nuvio_simkl_sync"
+    private const val PAYLOAD_KEY = "simkl_sync_snapshot"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(PREFERENCES_NAME)
+
+
 
     actual fun loadPayload(): String? =
-        store.getString(ProfileScopedKey.of(payloadKey))
+        preferences?.getString(ProfileScopedKey.of(PAYLOAD_KEY), null)
 
     actual fun savePayload(payload: String) {
-        store.putString(ProfileScopedKey.of(payloadKey), payload)
+        preferences?.edit()?.putString(ProfileScopedKey.of(PAYLOAD_KEY), payload)?.apply()
     }
 
     actual fun removeProfile(profileId: Int) {
-        store.remove(ProfileScopedKey.of(payloadKey, profileId))
+        preferences?.edit()
+            ?.remove(ProfileScopedKey.of(PAYLOAD_KEY, profileId))
+            ?.apply()
     }
 }

@@ -18,7 +18,6 @@ internal actual fun currentDeviceClientMetadata(): DeviceClientMetadata {
         .joinToString(" ")
 
     return DeviceClientMetadata(
-        clientName = "Nuvio Desktop",
         deviceName = deviceName,
         platform = platform,
     )

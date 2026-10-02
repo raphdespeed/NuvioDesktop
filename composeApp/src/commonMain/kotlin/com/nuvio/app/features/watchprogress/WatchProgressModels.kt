@@ -1,6 +1,5 @@
 package com.nuvio.app.features.watchprogress
 
-import com.nuvio.app.core.i18n.localizedSeasonEpisodeCode
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.cloudLibraryProviderPosterUrl
 import com.nuvio.app.features.details.MetaVideo
@@ -61,7 +60,6 @@ data class WatchProgressEntry(
     override val trackingSourceUrl: String? = null,
     /** Stable server/storage identity. [videoId] remains the playback identity. */
     val progressKey: String? = null,
-    val excludedNextUpSeasons: Set<Int> = emptySet(),
 ) : TrackingAttributedItem {
     override val trackingContentId: String
         get() = parentMetaId
@@ -173,7 +171,6 @@ data class WatchProgressUiState(
         get() = entries.continueWatchingEntries(limit = ContinueWatchingLimit)
 }
 
-@Serializable
 data class WatchProgressPlaybackSession(
     val profileId: Int,
     val contentType: String,
@@ -221,17 +218,7 @@ data class ContinueWatchingItem(
     val progressFraction: Float,
     val isReleaseAlert: Boolean = false,
     val isNewSeasonRelease: Boolean = false,
-    val rawPosterUrl: String? = null,
-    val rawBackgroundUrl: String? = null,
-    val shufflePlayback: Boolean = false,
-    val isWatched: Boolean = false,
 )
-
-internal fun continueWatchingItemKey(item: ContinueWatchingItem): String {
-    val season = item.seasonNumber ?: -1
-    val episode = item.episodeNumber ?: -1
-    return "${item.parentMetaId}:$season:$episode"
-}
 
 data class ContinueWatchingPreferencesUiState(
     val isVisible: Boolean = true,
@@ -244,6 +231,24 @@ data class ContinueWatchingPreferencesUiState(
     val showResumePromptOnLaunch: Boolean = true,
     val sortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
 )
+
+fun List<WatchProgressEntry>.profileContinueWatchingEntries(limit: Int = Int.MAX_VALUE): List<WatchProgressEntry> =
+    asSequence()
+        .filter { entry -> !entry.isLiveTvProgressEntry() }
+        .filter { entry -> entry.isResumable && entry.progressFraction >= 0.02f }
+        .sortedByDescending { entry -> entry.lastUpdatedEpochMs }
+        .distinctBy { entry -> entry.profileContinueWatchingGroupKey() }
+        .take(limit)
+        .toList()
+
+private fun WatchProgressEntry.profileContinueWatchingGroupKey(): String {
+    val normalizedType = parentMetaType.trim().lowercase()
+    return if (isEpisode || normalizedType in setOf("series", "show", "tv", "tvshow")) {
+        "series:${parentMetaId.trim()}"
+    } else {
+        "item:${parentMetaType.trim().lowercase()}:${videoId.trim().ifBlank { parentMetaId.trim() }}"
+    }
+}
 
 internal fun nextUpDismissKey(
     contentId: String,
@@ -369,7 +374,11 @@ internal fun buildContinueWatchingEpisodeSubtitle(
     episodeNumber: Int?,
     episodeTitle: String?,
 ): String {
-    val episodeCode = localizedSeasonEpisodeCode(seasonNumber, episodeNumber)
+    val episodeCode = when {
+        seasonNumber != null && episodeNumber != null -> "S${seasonNumber}E${episodeNumber}"
+        episodeNumber != null -> "E${episodeNumber}"
+        else -> null
+    }
     val title = episodeTitle.orEmpty()
     return listOfNotNull(episodeCode, title.takeIf { it.isNotBlank() }).joinToString(" • ")
 }

@@ -1,21 +1,29 @@
 package com.nuvio.app.features.settings
 
-import com.nuvio.app.core.diagnostics.SentryConfig
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 
 internal actual object SentrySettingsPlatform {
-    actual val crashReportsSupported: Boolean = SentryConfig.DESKTOP_DSN.isNotBlank()
-    actual val usesDesktopCopy: Boolean = true
+    actual val crashReportsSupported: Boolean = true
 }
 
 internal actual object SentrySettingsStorage {
+    private const val preferencesName = "nuvio_sentry_settings"
     private const val enabledKey = "enabled"
-    private val store = DesktopStorage.store("nuvio_sentry_settings")
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun loadEnabled(): Boolean? =
-        if (store.contains(enabledKey)) store.getBoolean(enabledKey) else null
+        preferences?.let { prefs ->
+            if (prefs.contains(enabledKey)) prefs.getBoolean(enabledKey, true) else null
+        }
 
     actual fun saveEnabled(enabled: Boolean) {
-        store.putBoolean(enabledKey, enabled)
+        preferences
+            ?.edit()
+            ?.putBoolean(enabledKey, enabled)
+            ?.apply()
     }
 }

@@ -21,13 +21,7 @@ data class StreamBadgeSettingsUiState(
     val showFileSizeBadges: Boolean = true,
     val showAddonLogo: Boolean = false,
     val badgePlacement: StreamBadgePlacement = StreamBadgePlacement.BOTTOM,
-    val backgroundMode: StreamBackgroundMode = StreamBackgroundMode.Normal,
 )
-
-enum class StreamBackgroundMode {
-    Normal,
-    Cinematic,
-}
 
 enum class StreamBadgePlacement {
     TOP,
@@ -49,7 +43,6 @@ object StreamBadgeSettingsRepository {
     private var showFileSizeBadges = true
     private var showAddonLogo = false
     private var badgePlacement = StreamBadgePlacement.BOTTOM
-    private var backgroundMode = StreamBackgroundMode.Normal
 
     fun ensureLoaded() {
         if (hasLoaded) return
@@ -66,7 +59,6 @@ object StreamBadgeSettingsRepository {
         showFileSizeBadges = true
         showAddonLogo = false
         badgePlacement = StreamBadgePlacement.BOTTOM
-        backgroundMode = StreamBackgroundMode.Normal
         _uiState.value = StreamBadgeSettingsUiState()
     }
 
@@ -164,14 +156,6 @@ object StreamBadgeSettingsRepository {
         StreamBadgeSettingsStorage.saveStreamBadgePlacement(placement.name)
     }
 
-    fun setBackgroundMode(mode: StreamBackgroundMode) {
-        ensureLoaded()
-        if (backgroundMode == mode) return
-        backgroundMode = mode
-        publish()
-        StreamBadgeSettingsStorage.saveStreamBackgroundMode(mode.name.lowercase())
-    }
-
     private fun loadFromDisk() {
         hasLoaded = true
         val storedRules = parseStreamBadgeRules(StreamBadgeSettingsStorage.loadStreamBadgeRules())
@@ -183,9 +167,6 @@ object StreamBadgeSettingsRepository {
         streamBadgeRules = storedRules ?: legacyRules ?: StreamBadgeRules()
         showFileSizeBadges = StreamBadgeSettingsStorage.loadShowFileSizeBadges() ?: true
         showAddonLogo = StreamBadgeSettingsStorage.loadShowAddonLogo() ?: false
-        backgroundMode = StreamBadgeSettingsStorage.loadStreamBackgroundMode()
-            ?.let { storedMode -> StreamBackgroundMode.entries.firstOrNull { it.name.equals(storedMode, ignoreCase = true) } }
-            ?: StreamBackgroundMode.Normal
         badgePlacement = StreamBadgeSettingsStorage.loadStreamBadgePlacement()
             ?.let { storedPlacement ->
                 StreamBadgePlacement.entries.firstOrNull { placement ->
@@ -206,7 +187,6 @@ object StreamBadgeSettingsRepository {
             showFileSizeBadges = showFileSizeBadges,
             showAddonLogo = showAddonLogo,
             badgePlacement = badgePlacement,
-            backgroundMode = backgroundMode,
         )
     }
 

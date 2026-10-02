@@ -33,6 +33,8 @@ AGENTS.md
 
 PERFORMANCE_FINDINGS.md
 scripts/*
+!scripts/build-speedy-windows.ps1
+output_windows/
 !scripts/sign-ios-device-app.py
 iosApp/Configuration/DeviceSigning.local.json
 

@@ -6,6 +6,8 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.settings.NuvioAudioSelectorStyle
+import com.nuvio.app.features.settings.NuvioSubtitleSelectorStyle
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
@@ -22,9 +24,12 @@ internal fun PlayerScreenModalHosts(
     showAudioModal: Boolean,
     audioTracks: List<AudioTrack>,
     selectedAudioIndex: Int,
+    audioSelectorStyle: NuvioAudioSelectorStyle,
     onAudioTrackSelected: (Int) -> Unit,
     onAudioModalDismissed: () -> Unit,
     showSubtitleModal: Boolean,
+    activeSubtitleTab: SubtitleTab,
+    subtitleSelectorStyle: NuvioSubtitleSelectorStyle,
     subtitleTracks: List<SubtitleTrack>,
     selectedSubtitleIndex: Int,
     addonSubtitles: List<AddonSubtitle>,
@@ -34,24 +39,33 @@ internal fun PlayerScreenModalHosts(
     subtitleDelayMs: Int,
     selectedAddonSubtitle: AddonSubtitle?,
     subtitleAutoSyncState: SubtitleAutoSyncUiState,
+    onSubtitleTabSelected: (SubtitleTab) -> Unit,
+    subtitleSyncEnabled: Boolean,
+    currentPlaybackPositionMs: Long,
+    isPlaying: Boolean,
     onBuiltInSubtitleTrackSelected: (Int) -> Unit,
     onAddonSubtitleSelected: (AddonSubtitle) -> Unit,
     onFetchAddonSubtitles: () -> Unit,
-    onSubtitleStyleChanged: (SubtitleStyleState) -> Unit,
+    onSubtitleStyleChanged: ((SubtitleStyleState) -> SubtitleStyleState) -> Unit,
     onSubtitleDelayChanged: (Int) -> Unit,
     onSubtitleDelayReset: () -> Unit,
     onAutoSyncCapture: () -> Unit,
     onAutoSyncCueSelected: (SubtitleSyncCue) -> Unit,
     onAutoSyncReload: () -> Unit,
+    onTogglePlayback: () -> Unit,
     onSubtitleModalDismissed: () -> Unit,
     showVideoSettingsModal: Boolean,
     playerSettings: PlayerSettingsUiState,
     onVideoSettingsChanged: () -> Unit,
     onVideoSettingsModalDismissed: () -> Unit,
+    showQualityPanel: Boolean,
+    playerQualityState: PlayerQualitySelectionState,
+    selectedPlayerQualityId: String?,
+    currentQualityLabel: String?,
+    onPlayerQualitySelected: (String?) -> Unit,
+    onQualityPanelDismissed: () -> Unit,
     showSourcesPanel: Boolean,
     sourceStreamsState: StreamsUiState,
-    contentTitle: String,
-    activeEpisodeTitle: String?,
     activeSourceUrl: String,
     activeStreamTitle: String,
     onSourceFilterSelected: (String?) -> Unit,
@@ -118,12 +132,15 @@ internal fun PlayerScreenModalHosts(
         visible = showAudioModal,
         audioTracks = audioTracks,
         selectedIndex = selectedAudioIndex,
+        selectorStyle = audioSelectorStyle,
         onTrackSelected = onAudioTrackSelected,
         onDismiss = onAudioModalDismissed,
     )
 
     SubtitleModal(
         visible = showSubtitleModal,
+        activeTab = activeSubtitleTab,
+        selectorStyle = subtitleSelectorStyle,
         subtitleTracks = subtitleTracks,
         selectedSubtitleIndex = selectedSubtitleIndex,
         addonSubtitles = addonSubtitles,
@@ -135,6 +152,10 @@ internal fun PlayerScreenModalHosts(
         subtitleDelayMs = subtitleDelayMs,
         selectedAddonSubtitle = selectedAddonSubtitle,
         subtitleAutoSyncState = subtitleAutoSyncState,
+        onTabSelected = onSubtitleTabSelected,
+        subtitleSyncEnabled = subtitleSyncEnabled,
+        currentPlaybackPositionMs = currentPlaybackPositionMs,
+        isPlaying = isPlaying,
         onBuiltInTrackSelected = onBuiltInSubtitleTrackSelected,
         onAddonSubtitleSelected = onAddonSubtitleSelected,
         onFetchAddonSubtitles = onFetchAddonSubtitles,
@@ -144,6 +165,7 @@ internal fun PlayerScreenModalHosts(
         onAutoSyncCapture = onAutoSyncCapture,
         onAutoSyncCueSelected = onAutoSyncCueSelected,
         onAutoSyncReload = onAutoSyncReload,
+        onTogglePlayback = onTogglePlayback,
         onDismiss = onSubtitleModalDismissed,
     )
 
@@ -154,13 +176,18 @@ internal fun PlayerScreenModalHosts(
         onDismiss = onVideoSettingsModalDismissed,
     )
 
+    PlayerQualityPanel(
+        visible = showQualityPanel,
+        state = playerQualityState,
+        selectedQualityId = selectedPlayerQualityId,
+        currentResolutionLabel = currentQualityLabel,
+        onQualitySelected = onPlayerQualitySelected,
+        onDismiss = onQualityPanelDismissed,
+    )
+
     PlayerSourcesPanel(
         visible = showSourcesPanel,
         streamsUiState = sourceStreamsState,
-        contentTitle = contentTitle,
-        currentSeason = activeSeasonNumber,
-        currentEpisode = activeEpisodeNumber,
-        currentEpisodeTitle = activeEpisodeTitle,
         currentStreamUrl = activeSourceUrl,
         currentStreamName = activeStreamTitle,
         onFilterSelected = onSourceFilterSelected,

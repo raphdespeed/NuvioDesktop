@@ -25,9 +25,20 @@ private val desktopDownloadHttpClient: HttpClient = HttpClient.newBuilder()
 
 internal actual object DownloadsPlatformDownloader {
     private val downloadsDir: File
-        get() = File(DesktopStorage.rootDir.resolve("downloads").also { it.createDirectories() }.toUri())
+        get() {
+            val selected = DownloadsExternalFolderPlatform.selectedFolderUri()
+            if (selected != null) {
+                val folder = File(URI(selected))
+                check(folder.isDirectory && folder.canWrite()) {
+                    DownloadsExternalFolderPlatform.markUnavailable()
+                    "Le dossier de téléchargement est indisponible"
+                }
+                return folder
+            }
+            return File(DesktopStorage.rootDir.resolve("downloads").also { it.createDirectories() }.toUri())
+        }
 
-    actual fun restoreItem(item: DownloadItem): DownloadItem =
+    fun restoreItem(item: DownloadItem): DownloadItem =
         if (item.status == DownloadStatus.Downloading) {
             item.copy(status = DownloadStatus.Paused, errorMessage = null)
         } else {
@@ -39,7 +50,6 @@ internal actual object DownloadsPlatformDownloader {
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
         onSuccess: (localFileUri: String, totalBytes: Long?) -> Unit,
         onFailure: (message: String) -> Unit,
-        onPaused: () -> Unit,
     ): DownloadsTaskHandle {
         val job = SupervisorJob()
         val scope = CoroutineScope(job + Dispatchers.IO)
@@ -106,7 +116,7 @@ internal actual object DownloadsPlatformDownloader {
                 val finalSize = destination.length()
                 onSuccess(destination.toURI().toString(), totalBytes ?: finalSize)
             } catch (error: CancellationException) {
-                onPaused()
+                // The shared repository updates the paused state before cancelling.
                 throw error
             } catch (error: Throwable) {
                 onFailure(error.message ?: "Download failed")
@@ -138,6 +148,37 @@ internal actual object DownloadsPlatformDownloader {
             ?: localFileUri?.toLocalFileOrNull()?.name?.takeIf { it.isNotBlank() }
             ?: return null
         return File(downloadsDir, fileName).takeIf { it.exists() }?.toURI()?.toString()
+    }
+
+    actual fun cacheSubtitleFiles(
+        subtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
+        companionBaseFileName: String,
+    ): List<com.nuvio.app.features.streams.StreamSubtitle> {
+        val directory = File(downloadsDir, "subtitles").apply { mkdirs() }
+        val base = companionBaseFileName.substringBeforeLast('.').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        return subtitles.mapIndexedNotNull { index, subtitle ->
+            if (!subtitle.url.startsWith("http", true)) return@mapIndexedNotNull subtitle
+            runCatching {
+                val extension = URI(subtitle.url).path.substringAfterLast('.', "srt")
+                    .lowercase().takeIf { it in setOf("srt", "vtt", "ass", "ssa") } ?: "srt"
+                val file = File(directory, "${base.take(72)}_${index + 1}.$extension")
+                val builder = HttpRequest.newBuilder(URI(subtitle.url)).timeout(Duration.ofSeconds(30)).GET()
+                subtitle.headers.orEmpty().forEach { (key,value) -> builder.header(key,value) }
+                val response = desktopDownloadHttpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream())
+                response.body().use { input ->
+                    check(response.statusCode() in 200..299) { "Subtitle request failed" }
+                    file.outputStream().use { output ->
+                        val buffer = ByteArray(8192); var total = 0
+                        while (true) {
+                            val count = input.read(buffer); if (count < 0) break
+                            total += count; check(total <= 16 * 1024 * 1024) { "Subtitle file too large" }
+                            output.write(buffer,0,count)
+                        }
+                    }
+                }
+                subtitle.copy(url=file.toURI().toString(),headers=null)
+            }.getOrNull()
+        }
     }
 
     actual fun openDownloadsDirectory(): Boolean {

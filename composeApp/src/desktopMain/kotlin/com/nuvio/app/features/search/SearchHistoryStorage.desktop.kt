@@ -1,22 +1,24 @@
 package com.nuvio.app.features.search
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 import com.nuvio.app.core.storage.ProfileScopedKey
 
-internal actual object SearchHistoryStorage {
-    private val store = DesktopStorage.store("nuvio_search_history")
-    private const val enabledKey = "recent_searches_enabled"
+actual object SearchHistoryStorage {
+    private const val preferencesName = "nuvio_search_history"
+    private const val payloadKey = "search_history_payload"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun loadPayload(): String? =
-        store.getString(ProfileScopedKey.of("search_history"))
+        preferences?.getString(ProfileScopedKey.of(payloadKey), null)
 
     actual fun savePayload(payload: String) {
-        store.putString(ProfileScopedKey.of("search_history"), payload)
-    }
-
-    actual fun loadEnabled(): Boolean? = store.getBoolean(ProfileScopedKey.of(enabledKey))
-
-    actual fun saveEnabled(enabled: Boolean) {
-        store.putBoolean(ProfileScopedKey.of(enabledKey), enabled)
+        preferences
+            ?.edit()
+            ?.putString(ProfileScopedKey.of(payloadKey), payload)
+            ?.apply()
     }
 }

@@ -9,20 +9,16 @@ import java.awt.Window
 import java.beans.PropertyChangeListener
 
 internal actual object AppForegroundMonitor {
-    actual fun events(): Flow<AppVisibility> = callbackFlow {
+    actual fun events(): Flow<Unit> = callbackFlow {
         val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
         val listener = PropertyChangeListener { event ->
-            trySend(
-                if (event.newValue is Window) AppVisibility.Foreground else AppVisibility.Background,
-            )
+            if (event.newValue is Window) trySend(Unit)
         }
 
-        trySend(
-            if (focusManager.activeWindow != null) AppVisibility.Foreground else AppVisibility.Background,
-        )
+        if (focusManager.activeWindow != null) trySend(Unit)
         focusManager.addPropertyChangeListener("activeWindow", listener)
         awaitClose {
             focusManager.removePropertyChangeListener("activeWindow", listener)
         }
-    }.distinctUntilChanged()
+    }
 }

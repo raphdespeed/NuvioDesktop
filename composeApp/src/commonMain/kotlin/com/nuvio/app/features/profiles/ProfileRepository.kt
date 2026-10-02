@@ -5,14 +5,14 @@ import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.auth.isAnonymous
 import com.nuvio.app.core.network.SupabaseProvider
-import com.nuvio.app.core.poster.CustomPosterUrlRepository
-import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.ai.AiAssistantSettingsRepository
 import com.nuvio.app.features.collection.CollectionMobileSettingsRepository
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.DownloadsExternalFolderPlatform
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
@@ -20,6 +20,7 @@ import com.nuvio.app.core.ui.CardDepthStyleRepository
 import com.nuvio.app.core.ui.PosterCardStyleRepository
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibraryDisplaySettingsRepository
+import com.nuvio.app.features.livetv.LiveTvRepository
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
@@ -27,6 +28,7 @@ import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.search.SearchHistoryRepository
 import com.nuvio.app.features.search.SearchRepository
+import com.nuvio.app.features.settings.NuvioSpeedySettingsRepository
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.tracking.TrackingProviderRegistry
@@ -38,16 +40,16 @@ import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -72,7 +74,7 @@ object ProfileRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("ProfileRepository")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val profileSwitchMutex = Mutex()
+    private val pullMutex = Mutex()
     private fun localizedString(resource: StringResource): String = runBlocking { getString(resource) }
 
     private val _state = MutableStateFlow(ProfileState())
@@ -124,16 +126,34 @@ object ProfileRepository {
         _state.value = ProfileState()
     }
 
-    suspend fun pullProfiles() {
+    suspend fun pullProfiles(): Boolean = pullProfiles(emptyMap())
+
+    private suspend fun pullProfiles(backgroundOverrides: Map<Int, String?>): Boolean = pullMutex.withLock {
         if (AuthRepository.state.value.isAnonymous) {
             if (!_state.value.isLoaded) {
                 _state.value = _state.value.copy(isLoaded = true)
             }
-            return
+            return@withLock true
         }
         try {
             val result = SupabaseProvider.client.postgrest.rpc("sync_pull_profiles")
-            val profiles = result.decodeList<NuvioProfile>()
+            val cachedBackgrounds = decodeStoredPayload()
+                ?.profiles
+                .orEmpty()
+                .mapNotNull { profile ->
+                    normalizedProfileBackgroundUrl(profile.backgroundUrl)
+                        ?.let { profile.profileIndex to it }
+                }
+                .toMap()
+            val localBackgrounds = cachedBackgrounds + _state.value.profiles.mapNotNull { profile ->
+                normalizedProfileBackgroundUrl(profile.backgroundUrl)
+                    ?.let { profile.profileIndex to it }
+            }.toMap()
+            val profiles = mergeProfileBackgrounds(
+                remoteProfiles = result.decodeList<NuvioProfile>(),
+                localBackgrounds = localBackgrounds,
+                backgroundOverrides = backgroundOverrides,
+            )
             _state.value = _state.value.copy(
                 profiles = profiles.sortedBy { it.profileIndex },
                 isLoaded = true,
@@ -144,26 +164,20 @@ object ProfileRepository {
                 activeProfileIndex = _state.value.activeProfile!!.profileIndex
             }
             persist()
+            return@withLock true
         } catch (e: Throwable) {
-            if (AuthRepository.signOutIfSessionInvalid(e, "Profile pull")) return
+            if (e is CancellationException) throw e
+            if (AuthRepository.signOutIfSessionInvalid(e, "Profile pull")) return@withLock false
             log.e(e) { "Failed to pull profiles" }
             if (!_state.value.isLoaded) {
                 _state.value = _state.value.copy(isLoaded = true)
             }
+            return@withLock false
         }
     }
 
-    suspend fun switchToProfile(profileIndex: Int) {
-        profileSwitchMutex.withLock {
-            withContext(Dispatchers.Default) {
-                selectProfile(profileIndex)
-            }
-        }
-    }
-
-    private fun selectProfile(profileIndex: Int) {
+    fun selectProfile(profileIndex: Int) {
         activeProfileIndex = profileIndex
-        CustomPosterUrlRepository.onProfileChanged()
         val selectedProfile = _state.value.profiles.find { it.profileIndex == profileIndex }
         _state.value = _state.value.copy(
             activeProfile = selectedProfile,
@@ -188,9 +202,10 @@ object ProfileRepository {
         StreamBadgeSettingsRepository.onProfileChanged()
         P2pSettingsRepository.onProfileChanged()
         HomeCatalogSettingsRepository.onProfileChanged()
+        NuvioSpeedySettingsRepository.onProfileChanged()
+        AiAssistantSettingsRepository.onProfileChanged()
         HomeRepository.clear()
         MetaScreenSettingsRepository.onProfileChanged()
-        com.nuvio.app.features.shuffle.EpisodeShuffleRepository.onProfileChanged()
         ContinueWatchingPreferencesRepository.onProfileChanged()
         com.nuvio.app.features.watchprogress.ContinueWatchingEnrichmentCache.onProfileChanged()
         EpisodeReleaseNotificationsRepository.onProfileChanged()
@@ -201,25 +216,45 @@ object ProfileRepository {
         CollectionRepository.onProfileChanged()
         CollectionMobileSettingsRepository.onProfileChanged()
         DownloadsRepository.onProfileChanged()
-        ProfileSettingsSync.onProfileChanged()
+        DownloadsExternalFolderPlatform.onProfileChanged()
+        LiveTvRepository.onProfileChanged()
     }
 
-    suspend fun pushProfiles(profiles: List<ProfilePushPayload>) {
+    suspend fun pushProfiles(profiles: List<ProfilePushPayload>): ProfileMutationResult {
         if (AuthRepository.state.value.isAnonymous) {
             applyPayloadsLocally(profiles)
-            return
+            return ProfileMutationResult(success = true)
         }
         try {
             val params = buildJsonObject {
                 put("p_client_max_profiles", MAX_PROFILES)
-                put("p_profiles", json.encodeToJsonElement(profiles))
+                put(
+                    "p_profiles",
+                    json.encodeToJsonElement(profiles.map(ProfilePushPayload::toUpstreamProfilePushPayload)),
+                )
                 putSyncOriginClientId()
             }
             SupabaseProvider.client.postgrest.rpc("sync_push_profiles", params)
-            pullProfiles()
+            val backgroundOverrides = profiles.associate {
+                it.profileIndex to normalizedProfileBackgroundUrl(it.backgroundUrl)
+            }
+            if (!pullProfiles(backgroundOverrides)) {
+                applyPayloadsLocally(profiles)
+            }
+            return ProfileMutationResult(success = true)
         } catch (e: Throwable) {
-            if (AuthRepository.signOutIfSessionInvalid(e, "Profile push")) return
+            if (AuthRepository.signOutIfSessionInvalid(e, "Profile push")) {
+                return ProfileMutationResult(
+                    success = false,
+                    message = localizedString(Res.string.profile_save_failed),
+                )
+            }
             log.e(e) { "Failed to push profiles" }
+            return ProfileMutationResult(
+                success = false,
+                message = e.message?.takeIf { it.isNotBlank() }
+                    ?: localizedString(Res.string.profile_save_failed),
+            )
         }
     }
 
@@ -228,33 +263,28 @@ object ProfileRepository {
         avatarColorHex: String,
         avatarId: String? = null,
         avatarUrl: String? = null,
+        backgroundUrl: String? = null,
         usesPrimaryAddons: Boolean = false,
-    ) {
+    ): ProfileMutationResult {
         val existing = _state.value.profiles
-        val nextIndex = ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull() ?: return
-
-        val allPayloads = existing.map { profile ->
-            ProfilePushPayload(
-                profileIndex = profile.profileIndex,
-                name = profile.name,
-                avatarColorHex = profile.avatarColorHex,
-                usesPrimaryAddons = profile.usesPrimaryAddons,
-                usesPrimaryPlugins = profile.usesPrimaryPlugins,
-                avatarId = profile.avatarId,
-                avatarUrl = profile.avatarUrl,
-                profileBackgroundId = profile.profileBackgroundId,
-                profileBackgroundUrl = profile.profileBackgroundUrl,
+        val nextIndex = ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull()
+            ?: return ProfileMutationResult(
+                success = false,
+                message = localizedString(Res.string.profile_max_profiles_reached),
             )
-        } + ProfilePushPayload(
+
+        val allPayloads = existing.map(NuvioProfile::toProfilePushPayload) + ProfilePushPayload(
             profileIndex = nextIndex,
             name = name,
             avatarColorHex = avatarColorHex,
             usesPrimaryAddons = usesPrimaryAddons,
+            usesPrimaryPlugins = usesPrimaryAddons,
             avatarId = avatarId,
             avatarUrl = avatarUrl,
+            backgroundUrl = backgroundUrl,
         )
 
-        pushProfiles(allPayloads)
+        return pushProfiles(allPayloads)
     }
 
     suspend fun updateProfile(
@@ -263,38 +293,27 @@ object ProfileRepository {
         avatarColorHex: String,
         avatarId: String? = null,
         avatarUrl: String? = null,
-        profileBackgroundId: String? = null,
-        profileBackgroundUrl: String? = null,
+        backgroundUrl: String? = null,
         usesPrimaryAddons: Boolean = false,
-    ) {
+    ): ProfileMutationResult {
         val allPayloads = _state.value.profiles.map { profile ->
-            if (profile.profileIndex == profileIndex) {
-                ProfilePushPayload(
-                    profileIndex = profileIndex,
-                    name = name,
-                    avatarColorHex = avatarColorHex,
-                    usesPrimaryAddons = usesPrimaryAddons,
-                    avatarId = avatarId,
-                    avatarUrl = avatarUrl,
-                    profileBackgroundId = profileBackgroundId,
-                    profileBackgroundUrl = profileBackgroundUrl,
-                )
-            } else {
-                ProfilePushPayload(
-                    profileIndex = profile.profileIndex,
-                    name = profile.name,
-                    avatarColorHex = profile.avatarColorHex,
-                    usesPrimaryAddons = profile.usesPrimaryAddons,
-                    usesPrimaryPlugins = profile.usesPrimaryPlugins,
-                    avatarId = profile.avatarId,
-                    avatarUrl = profile.avatarUrl,
-                    profileBackgroundId = profile.profileBackgroundId,
-                    profileBackgroundUrl = profile.profileBackgroundUrl,
-                )
+            profile.toProfilePushPayload().let { payload ->
+                if (profile.profileIndex == profileIndex) {
+                    payload.copy(
+                        name = name,
+                        avatarColorHex = avatarColorHex,
+                        usesPrimaryAddons = usesPrimaryAddons,
+                        avatarId = avatarId,
+                        avatarUrl = avatarUrl,
+                        backgroundUrl = backgroundUrl,
+                    )
+                } else {
+                    payload
+                }
             }
         }
 
-        pushProfiles(allPayloads)
+        return pushProfiles(allPayloads)
     }
 
     suspend fun deleteProfile(profileIndex: Int) {
@@ -337,7 +356,6 @@ object ProfileRepository {
             val result = SupabaseProvider.client.postgrest.rpc("verify_profile_pin", params)
             result.decodeSingle<PinVerifyResult>().also { verifyResult ->
                 if (verifyResult.unlocked) {
-                    pullProfiles()
                     rememberVerifiedPin(profileIndex = profileIndex, pin = pin)
                 }
             }
@@ -416,17 +434,15 @@ object ProfileRepository {
 
     private fun applyPayloadsLocally(payloads: List<ProfilePushPayload>) {
         val authState = AuthRepository.state.value as? AuthState.Authenticated ?: return
+        val existingProfiles = _state.value.profiles.associateBy(NuvioProfile::profileIndex)
         val profiles = payloads.map { p ->
-            NuvioProfile(
-                id = "",
-                userId = authState.userId,
-                profileIndex = p.profileIndex,
+            val existing = existingProfiles[p.profileIndex]
+            (existing ?: NuvioProfile(userId = authState.userId, profileIndex = p.profileIndex)).copy(
                 name = p.name,
                 avatarColorHex = p.avatarColorHex,
                 avatarId = p.avatarId,
                 avatarUrl = p.avatarUrl,
-                profileBackgroundId = p.profileBackgroundId,
-                profileBackgroundUrl = p.profileBackgroundUrl,
+                backgroundUrl = p.backgroundUrl,
                 usesPrimaryAddons = p.usesPrimaryAddons,
                 usesPrimaryPlugins = p.usesPrimaryPlugins,
             )

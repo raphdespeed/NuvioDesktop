@@ -1,10 +1,8 @@
 package com.nuvio.app.core.network
 
 internal object SupabaseEndpointConfig {
-    private val primaryBaseUrl: String
-        get() = ServerConfigurationRepository.active.value.backendUrl.normalizedBaseUrl()
-    private val fallbackBaseUrl: String
-        get() = ServerConfigurationRepository.active.value.fallbackBackendUrl.orEmpty().normalizedBaseUrl()
+    private val primaryBaseUrl: String = SupabaseConfig.URL.normalizedBaseUrl()
+    private val fallbackBaseUrl: String = SupabaseConfig.FALLBACK_URL.normalizedBaseUrl()
 
     val hasFallback: Boolean
         get() = fallbackBaseUrl.isNotBlank() && !fallbackBaseUrl.equals(primaryBaseUrl, ignoreCase = true)

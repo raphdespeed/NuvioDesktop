@@ -20,7 +20,7 @@ import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MAX_MS
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MIN_MS
 import com.nuvio.app.features.player.SubtitleColorSwatches
-import com.nuvio.app.features.player.SubtitleOutlineColorSwatches
+import com.nuvio.app.features.player.SubtitleColorSwatches as SubtitleOutlineColorSwatches
 import com.nuvio.app.features.player.SubtitleStyleState
 import com.nuvio.app.features.player.SubtitleTrack
 import com.nuvio.app.features.player.inferForcedSubtitleTrack
@@ -102,6 +102,8 @@ internal class NativePlayerController(
     private var pendingSubtitleDelayMs: Int? = null
     private var pendingSubtitleStyle: SubtitleStyleState? = null
     private var pendingUseLibass: Boolean = false
+    private var volumeBoost = 1f
+    private var muted = false
     private var lastSentControlsStructureKey: NativeControlsStructureKey? = null
     private var onAction: (PlayerControlsAction) -> Boolean = { false }
     private var onEvent: (String, Double) -> Boolean = { _, _ -> false }
@@ -477,7 +479,6 @@ internal class NativePlayerController(
                     PlayerResizeMode.Fit -> 0
                     PlayerResizeMode.Fill -> 1
                     PlayerResizeMode.Zoom -> 2
-                    PlayerResizeMode.Stretch -> 3
                 },
             )
         }
@@ -617,11 +618,23 @@ internal class NativePlayerController(
     private fun applyRememberedVolume() {
         val current = handle
         if (current == 0L) return
-        val level = rememberedVolumeLevel.coerceDesktopPlayerVolumeLevel()
+        val level = if (muted) 0f else (rememberedVolumeLevel * volumeBoost).coerceIn(0f, 2f)
         currentVolumeLevel = level
         NativePlayerBridge.setVolume(current, level)
         controlsState = controlsState.copy(volumeLevel = level)
         log.d { "applied remembered volume level=$level handle=$current" }
+    }
+
+    @Synchronized
+    override fun setMuted(muted: Boolean) {
+        this.muted = muted
+        applyRememberedVolume()
+    }
+
+    @Synchronized
+    override fun setVolumeBoost(multiplier: Float) {
+        volumeBoost = multiplier.coerceIn(1f, 2f)
+        applyRememberedVolume()
     }
 
     private fun fallbackSeekBy(offsetMs: Long) {
@@ -1077,7 +1090,7 @@ internal class NativePlayerController(
             fontSize = style.toMpvSubtitleFontSize(),
             subPos = style.toMpvSubtitlePosition(),
             useLibass = useLibass,
-            stripSdh = style.stripSdh,
+            stripSdh = false,
         )
     }
 

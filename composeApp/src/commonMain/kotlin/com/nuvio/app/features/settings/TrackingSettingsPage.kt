@@ -4,12 +4,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -18,16 +19,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.library.LibrarySourceMode
-import com.nuvio.app.features.mdblist.MdbListTracker
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.simkl.SimklAnimeIdPreference
+import com.nuvio.app.features.simkl.SimklAuthRepository
 import com.nuvio.app.features.simkl.SimklAuthUiState
 import com.nuvio.app.features.simkl.SimklConnectionMode
 import com.nuvio.app.features.tracking.TrackingProviderId
@@ -45,24 +44,26 @@ import com.nuvio.app.features.trakt.normalizeTraktContinueWatchingDaysCap
 import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
-import nuvio.composeapp.generated.resources.tracking_source_mdblist
-import nuvio.composeapp.generated.resources.settings_mdblist_library_description
-import nuvio.composeapp.generated.resources.settings_mdblist_progress_description
 import nuvio.composeapp.generated.resources.action_retry
+import nuvio.composeapp.generated.resources.action_save
+import nuvio.composeapp.generated.resources.settings_simkl_manual_client_id_description
+import nuvio.composeapp.generated.resources.settings_simkl_manual_client_id_label
+import nuvio.composeapp.generated.resources.settings_simkl_manual_client_id_saved
+import nuvio.composeapp.generated.resources.settings_simkl_manual_client_id_title
 import nuvio.composeapp.generated.resources.settings_tracking_connect_first
 import nuvio.composeapp.generated.resources.settings_tracking_data_sources
 import nuvio.composeapp.generated.resources.settings_tracking_nuvio_library_description
 import nuvio.composeapp.generated.resources.settings_tracking_nuvio_progress_description
 import nuvio.composeapp.generated.resources.settings_tracking_progress_refresh_failed
 import nuvio.composeapp.generated.resources.settings_tracking_services
+import nuvio.composeapp.generated.resources.settings_tracking_pencil
+import nuvio.composeapp.generated.resources.settings_tracking_pencil_description
 import nuvio.composeapp.generated.resources.settings_tracking_simkl_library_description
 import nuvio.composeapp.generated.resources.settings_tracking_simkl_progress_description
-import nuvio.composeapp.generated.resources.settings_tracking_simkl_recommendations_description
 import nuvio.composeapp.generated.resources.settings_tracking_source_fallback
 import nuvio.composeapp.generated.resources.settings_tracking_tmdb_recommendations_description
 import nuvio.composeapp.generated.resources.settings_tracking_trakt_library_description
 import nuvio.composeapp.generated.resources.settings_tracking_trakt_progress_description
-import nuvio.composeapp.generated.resources.settings_tracking_trakt_progress_required
 import nuvio.composeapp.generated.resources.settings_tracking_trakt_recommendations_description
 import nuvio.composeapp.generated.resources.settings_tracking_viewing_discovery
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_dialog_subtitle
@@ -71,8 +72,6 @@ import nuvio.composeapp.generated.resources.settings_tracking_anime_id_imdb
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_imdb_description
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_kitsu
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_kitsu_description
-import nuvio.composeapp.generated.resources.settings_tracking_anime_id_tvdb
-import nuvio.composeapp.generated.resources.settings_tracking_anime_id_tvdb_description
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_mal
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_mal_description
 import nuvio.composeapp.generated.resources.settings_tracking_anime_id_subtitle
@@ -100,7 +99,6 @@ import nuvio.composeapp.generated.resources.trakt_more_like_this_source_subtitle
 import nuvio.composeapp.generated.resources.trakt_more_like_this_source_title
 import nuvio.composeapp.generated.resources.trakt_more_like_this_source_tmdb
 import nuvio.composeapp.generated.resources.trakt_more_like_this_source_trakt
-import nuvio.composeapp.generated.resources.trakt_more_like_this_source_simkl
 import nuvio.composeapp.generated.resources.trakt_watch_progress_dialog_title
 import nuvio.composeapp.generated.resources.trakt_watch_progress_source_nuvio
 import nuvio.composeapp.generated.resources.trakt_watch_progress_source_trakt
@@ -115,6 +113,7 @@ internal fun LazyListScope.trackingSettingsContent(
     settingsUiState: TrackingSettingsUiState,
     commentsEnabled: Boolean,
     onCommentsEnabledChange: (Boolean) -> Unit,
+    onSupportersClick: () -> Unit,
 ) {
     item {
         SettingsSection(
@@ -125,7 +124,43 @@ internal fun LazyListScope.trackingSettingsContent(
                 isTablet = isTablet,
                 traktUiState = traktUiState,
                 simklUiState = simklUiState,
+                onSupportersClick = onSupportersClick,
             )
+        }
+    }
+
+    if (!simklUiState.credentialsConfigured || simklUiState.manualClientId.isNotBlank()) {
+        item {
+            SettingsSection(
+                title = stringResource(Res.string.settings_simkl_manual_client_id_title),
+                isTablet = isTablet,
+            ) {
+                SimklManualClientIdSettings(
+                    isTablet = isTablet,
+                    simklUiState = simklUiState,
+                )
+            }
+        }
+    }
+
+    item {
+        val metaSettings by remember {
+            MetaScreenSettingsRepository.ensureLoaded()
+            MetaScreenSettingsRepository.uiState
+        }.collectAsStateWithLifecycle()
+        SettingsSection(
+            title = stringResource(Res.string.settings_tracking_anime_section),
+            isTablet = isTablet,
+        ) {
+            SettingsGroup(isTablet = isTablet) {
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_tracking_pencil),
+                    description = stringResource(Res.string.settings_tracking_pencil_description),
+                    checked = metaSettings.showAnimeTrackingPencil,
+                    isTablet = isTablet,
+                    onCheckedChange = MetaScreenSettingsRepository::setShowAnimeTrackingPencil,
+                )
+            }
         }
     }
 
@@ -175,10 +210,65 @@ internal fun LazyListScope.trackingSettingsContent(
     }
 }
 
+@Composable
+private fun SimklManualClientIdSettings(
+    isTablet: Boolean,
+    simklUiState: SimklAuthUiState,
+) {
+    var clientId by rememberSaveable { mutableStateOf(simklUiState.manualClientId) }
+    var saved by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(simklUiState.manualClientId) {
+        clientId = simklUiState.manualClientId
+    }
+
+    SettingsGroup(isTablet = isTablet) {
+        Text(
+            text = stringResource(Res.string.settings_simkl_manual_client_id_description),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (isTablet) 20.dp else 16.dp, vertical = 12.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingsSecretTextField(
+            value = clientId,
+            onValueChange = {
+                clientId = it
+                saved = false
+            },
+            label = stringResource(Res.string.settings_simkl_manual_client_id_label),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (isTablet) 20.dp else 16.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (isTablet) 20.dp else 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(onClick = {
+                SimklAuthRepository.saveManualClientId(clientId)
+                saved = true
+            }) {
+                Text(stringResource(Res.string.action_save))
+            }
+            if (saved) {
+                Text(
+                    text = stringResource(Res.string.settings_simkl_manual_client_id_saved),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
 private enum class TrackingDataPicker {
     LIBRARY,
     WATCH_PROGRESS,
-    MORE_LIKE_THIS,
 }
 
 @Composable
@@ -195,11 +285,9 @@ private fun TrackingDataSources(
         WatchProgressSourceCoordinator.ensureStarted()
         WatchProgressSourceCoordinator.uiState
     }.collectAsStateWithLifecycle()
-    val mdblistConnected by remember { MdbListTracker.ensureLoaded(); MdbListTracker.isAuthenticated }.collectAsStateWithLifecycle()
     val connectedProviders = buildSet {
         if (traktConnected) add(TrackingProviderId.TRAKT)
         if (simklConnected) add(TrackingProviderId.SIMKL)
-        if (mdblistConnected) add(TrackingProviderId.MDBLIST)
     }
     val effectiveLibrarySource = effectiveLibrarySourceMode(settingsUiState.librarySourceMode) { provider ->
         provider in connectedProviders
@@ -257,30 +345,6 @@ private fun TrackingDataSources(
                 },
             )
         }
-        if (traktConnected || simklConnected) {
-            val effectiveRecommendationsSource = effectiveTrackingRecommendationsSource(
-                source = settingsUiState.moreLikeThisSource,
-                traktConnected = traktConnected,
-            )
-            val recommendationsFallback = if (effectiveRecommendationsSource != settingsUiState.moreLikeThisSource) {
-                stringResource(
-                    Res.string.settings_tracking_source_fallback,
-                    moreLikeThisSourceLabel(settingsUiState.moreLikeThisSource),
-                    moreLikeThisSourceLabel(effectiveRecommendationsSource),
-                )
-            } else {
-                null
-            }
-            SettingsGroupDivider(isTablet = isTablet)
-            TrackingPreferenceActionRow(
-                title = stringResource(Res.string.trakt_more_like_this_source_title),
-                description = stringResource(Res.string.trakt_more_like_this_source_subtitle),
-                value = moreLikeThisSourceLabel(effectiveRecommendationsSource),
-                supportingMessage = recommendationsFallback,
-                isTablet = isTablet,
-                onClick = { activePickerName = TrackingDataPicker.MORE_LIKE_THIS.name },
-            )
-        }
     }
 
     when (activePicker) {
@@ -289,7 +353,7 @@ private fun TrackingDataSources(
             title = stringResource(Res.string.trakt_library_source_dialog_title),
             subtitle = stringResource(Res.string.trakt_library_source_dialog_subtitle),
             selectedValue = effectiveLibrarySource,
-            options = librarySourceOptions(traktConnected, simklConnected, mdblistConnected),
+            options = librarySourceOptions(traktConnected, simklConnected),
             onSelected = TrackingSettingsRepository::setLibrarySourceMode,
             onDismiss = { activePickerName = null },
         )
@@ -298,7 +362,7 @@ private fun TrackingDataSources(
             title = stringResource(Res.string.trakt_watch_progress_dialog_title),
             subtitle = stringResource(Res.string.tracking_watch_progress_dialog_subtitle),
             selectedValue = effectiveProgressSource,
-            options = watchProgressSourceOptions(traktConnected, simklConnected, mdblistConnected),
+            options = watchProgressSourceOptions(traktConnected, simklConnected),
             onSelected = { source ->
                 scope.launch {
                     WatchProgressSourceCoordinator.selectSource(
@@ -309,24 +373,13 @@ private fun TrackingDataSources(
             },
             onDismiss = { activePickerName = null },
         )
-        TrackingDataPicker.MORE_LIKE_THIS -> TrackingAdaptivePicker(
-            isTablet = isTablet,
-            title = stringResource(Res.string.trakt_more_like_this_source_dialog_title),
-            subtitle = stringResource(Res.string.trakt_more_like_this_source_dialog_subtitle),
-            selectedValue = effectiveTrackingRecommendationsSource(
-                source = settingsUiState.moreLikeThisSource,
-                traktConnected = traktConnected,
-            ),
-            options = recommendationsSourceOptions(traktConnected),
-            onSelected = TrackingSettingsRepository::setMoreLikeThisSource,
-            onDismiss = { activePickerName = null },
-        )
         null -> Unit
     }
 }
 
 private enum class TrackingViewingPicker {
     CONTINUE_WATCHING,
+    MORE_LIKE_THIS,
 }
 
 @Composable
@@ -339,7 +392,19 @@ private fun TrackingViewingAndDiscovery(
 ) {
     var activePickerName by rememberSaveable { mutableStateOf<String?>(null) }
     val activePicker = activePickerName?.let(TrackingViewingPicker::valueOf)
-    val traktProgressActive = traktConnected && settingsUiState.watchProgressSource == WatchProgressSource.TRAKT
+    val effectiveRecommendationsSource = effectiveTrackingRecommendationsSource(
+        source = settingsUiState.moreLikeThisSource,
+        traktConnected = traktConnected,
+    )
+    val recommendationsFallback = if (effectiveRecommendationsSource != settingsUiState.moreLikeThisSource) {
+        stringResource(
+            Res.string.settings_tracking_source_fallback,
+            moreLikeThisSourceLabel(settingsUiState.moreLikeThisSource),
+            moreLikeThisSourceLabel(effectiveRecommendationsSource),
+        )
+    } else {
+        null
+    }
     val connectTraktFirst = stringResource(
         Res.string.settings_tracking_connect_first,
         TrackingBrand.TRAKT.displayName,
@@ -348,12 +413,8 @@ private fun TrackingViewingAndDiscovery(
     SettingsGroup(isTablet = isTablet) {
         TrackingPreferenceActionRow(
             title = stringResource(Res.string.trakt_continue_watching_window),
-            description = stringResource(
-                if (traktProgressActive) Res.string.trakt_continue_watching_subtitle
-                else Res.string.settings_tracking_trakt_progress_required,
-            ),
+            description = stringResource(Res.string.trakt_continue_watching_subtitle),
             value = continueWatchingDaysCapLabel(settingsUiState.continueWatchingDaysCap),
-            enabled = traktProgressActive,
             isTablet = isTablet,
             onClick = { activePickerName = TrackingViewingPicker.CONTINUE_WATCHING.name },
         )
@@ -369,6 +430,15 @@ private fun TrackingViewingAndDiscovery(
             isTablet = isTablet,
             onCheckedChange = onCommentsEnabledChange,
         )
+        SettingsGroupDivider(isTablet = isTablet)
+        TrackingPreferenceActionRow(
+            title = stringResource(Res.string.trakt_more_like_this_source_title),
+            description = stringResource(Res.string.trakt_more_like_this_source_subtitle),
+            value = moreLikeThisSourceLabel(effectiveRecommendationsSource),
+            supportingMessage = recommendationsFallback,
+            isTablet = isTablet,
+            onClick = { activePickerName = TrackingViewingPicker.MORE_LIKE_THIS.name },
+        )
     }
 
     when (activePicker) {
@@ -379,6 +449,15 @@ private fun TrackingViewingAndDiscovery(
             selectedValue = normalizeTraktContinueWatchingDaysCap(settingsUiState.continueWatchingDaysCap),
             options = continueWatchingOptions(),
             onSelected = TrackingSettingsRepository::setContinueWatchingDaysCap,
+            onDismiss = { activePickerName = null },
+        )
+        TrackingViewingPicker.MORE_LIKE_THIS -> TrackingAdaptivePicker(
+            isTablet = isTablet,
+            title = stringResource(Res.string.trakt_more_like_this_source_dialog_title),
+            subtitle = stringResource(Res.string.trakt_more_like_this_source_dialog_subtitle),
+            selectedValue = effectiveRecommendationsSource,
+            options = recommendationsSourceOptions(traktConnected),
+            onSelected = TrackingSettingsRepository::setMoreLikeThisSource,
             onDismiss = { activePickerName = null },
         )
         null -> Unit
@@ -394,37 +473,15 @@ private fun TrackingPreferenceActionRow(
     onClick: () -> Unit,
     supportingMessage: String? = null,
     isLoading: Boolean = false,
-    enabled: Boolean = true,
 ) {
-    val tokens = MaterialTheme.nuvio
     SettingsNavigationRow(
         title = title,
         description = listOfNotNull(
             description,
+            if (isLoading) "$value..." else value,
             supportingMessage?.takeIf(String::isNotBlank),
         ).joinToString("\n"),
-        enabled = enabled,
         isTablet = isTablet,
-        trailingContent = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (isLoading) {
-                    NuvioLoadingIndicator(
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = tokens.colors.accent,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        },
         onClick = onClick,
     )
 }
@@ -462,7 +519,6 @@ private fun TrackingInlineErrorRow(
 private fun librarySourceOptions(
     traktConnected: Boolean,
     simklConnected: Boolean,
-    mdblistConnected: Boolean,
 ): List<TrackingPickerOption<LibrarySourceMode>> {
     val traktAvailable = isTrackingBrandAvailable(TrackingBrand.TRAKT, traktConnected, simklConnected)
     val simklAvailable = isTrackingBrandAvailable(TrackingBrand.SIMKL, traktConnected, simklConnected)
@@ -486,13 +542,6 @@ private fun librarySourceOptions(
             enabled = simklAvailable,
             unavailableReason = trackingUnavailableReason(TrackingBrand.SIMKL, simklAvailable),
         ),
-        TrackingPickerOption(
-            value = LibrarySourceMode.MDBLIST,
-            title = stringResource(Res.string.tracking_source_mdblist),
-            description = stringResource(Res.string.settings_mdblist_library_description),
-            enabled = mdblistConnected,
-            unavailableReason = trackingUnavailableReason(TrackingBrand.MDBLIST, mdblistConnected),
-        ),
     )
 }
 
@@ -500,7 +549,6 @@ private fun librarySourceOptions(
 private fun watchProgressSourceOptions(
     traktConnected: Boolean,
     simklConnected: Boolean,
-    mdblistConnected: Boolean,
 ): List<TrackingPickerOption<WatchProgressSource>> {
     val traktAvailable = isTrackingBrandAvailable(TrackingBrand.TRAKT, traktConnected, simklConnected)
     val simklAvailable = isTrackingBrandAvailable(TrackingBrand.SIMKL, traktConnected, simklConnected)
@@ -524,13 +572,6 @@ private fun watchProgressSourceOptions(
             enabled = simklAvailable,
             unavailableReason = trackingUnavailableReason(TrackingBrand.SIMKL, simklAvailable),
         ),
-        TrackingPickerOption(
-            value = WatchProgressSource.MDBLIST,
-            title = stringResource(Res.string.tracking_source_mdblist),
-            description = stringResource(Res.string.settings_mdblist_progress_description),
-            enabled = mdblistConnected,
-            unavailableReason = trackingUnavailableReason(TrackingBrand.MDBLIST, mdblistConnected),
-        ),
     )
 }
 
@@ -549,10 +590,6 @@ private fun recommendationsSourceOptions(
     traktConnected: Boolean,
 ): List<TrackingPickerOption<MoreLikeThisSourcePreference>> {
     val traktAvailable = isTrackingBrandAvailable(TrackingBrand.TRAKT, traktConnected, simklConnected = false)
-    val simklConnected = com.nuvio.app.features.simkl.SimklAuthRepository.let {
-        it.ensureLoaded()
-        it.isAuthenticated.value
-    }
     return listOf(
         TrackingPickerOption(
             value = MoreLikeThisSourcePreference.TMDB,
@@ -565,13 +602,6 @@ private fun recommendationsSourceOptions(
             description = stringResource(Res.string.settings_tracking_trakt_recommendations_description),
             enabled = traktAvailable,
             unavailableReason = trackingUnavailableReason(TrackingBrand.TRAKT, traktAvailable),
-        ),
-        TrackingPickerOption(
-            value = MoreLikeThisSourcePreference.SIMKL,
-            title = stringResource(Res.string.trakt_more_like_this_source_simkl),
-            description = stringResource(Res.string.settings_tracking_simkl_recommendations_description),
-            enabled = simklConnected,
-            unavailableReason = if (!simklConnected) stringResource(Res.string.settings_tracking_connect_first, "Simkl") else null,
         ),
     )
 }
@@ -591,7 +621,6 @@ private fun librarySourceModeLabel(source: LibrarySourceMode): String = when (so
     LibrarySourceMode.TRAKT -> stringResource(Res.string.trakt_library_source_trakt)
     LibrarySourceMode.LOCAL -> stringResource(Res.string.trakt_library_source_nuvio)
     LibrarySourceMode.SIMKL -> stringResource(Res.string.tracking_source_simkl)
-    LibrarySourceMode.MDBLIST -> stringResource(Res.string.tracking_source_mdblist)
 }
 
 @Composable
@@ -599,14 +628,12 @@ private fun watchProgressSourceLabel(source: WatchProgressSource): String = when
     WatchProgressSource.TRAKT -> stringResource(Res.string.trakt_watch_progress_source_trakt)
     WatchProgressSource.NUVIO_SYNC -> stringResource(Res.string.trakt_watch_progress_source_nuvio)
     WatchProgressSource.SIMKL -> stringResource(Res.string.tracking_source_simkl)
-    WatchProgressSource.MDBLIST -> stringResource(Res.string.tracking_source_mdblist)
 }
 
 @Composable
 private fun moreLikeThisSourceLabel(source: MoreLikeThisSourcePreference): String = when (source) {
     MoreLikeThisSourcePreference.TRAKT -> stringResource(Res.string.trakt_more_like_this_source_trakt)
     MoreLikeThisSourcePreference.TMDB -> stringResource(Res.string.trakt_more_like_this_source_tmdb)
-    MoreLikeThisSourcePreference.SIMKL -> stringResource(Res.string.trakt_more_like_this_source_simkl)
 }
 
 @Composable
@@ -622,18 +649,12 @@ private fun continueWatchingDaysCapLabel(daysCap: Int): String {
 internal fun effectiveTrackingRecommendationsSource(
     source: MoreLikeThisSourcePreference,
     traktConnected: Boolean,
-): MoreLikeThisSourcePreference {
+): MoreLikeThisSourcePreference =
     if (source == MoreLikeThisSourcePreference.TRAKT && !traktConnected) {
-        return MoreLikeThisSourcePreference.TMDB
+        MoreLikeThisSourcePreference.TMDB
+    } else {
+        source
     }
-    if (source == MoreLikeThisSourcePreference.SIMKL) {
-        com.nuvio.app.features.simkl.SimklAuthRepository.ensureLoaded()
-        if (!com.nuvio.app.features.simkl.SimklAuthRepository.isAuthenticated.value) {
-            return MoreLikeThisSourcePreference.TMDB
-        }
-    }
-    return source
-}
 
 @Composable
 private fun AnimeIdPreferenceSection(
@@ -682,11 +703,6 @@ private fun animeIdPreferenceOptions(): List<TrackingPickerOption<SimklAnimeIdPr
         title = stringResource(Res.string.settings_tracking_anime_id_kitsu),
         description = stringResource(Res.string.settings_tracking_anime_id_kitsu_description),
     ),
-    TrackingPickerOption(
-        value = SimklAnimeIdPreference.TVDB,
-        title = stringResource(Res.string.settings_tracking_anime_id_tvdb),
-        description = stringResource(Res.string.settings_tracking_anime_id_tvdb_description),
-    ),
 )
 
 @Composable
@@ -694,5 +710,4 @@ private fun animeIdPreferenceLabel(preference: SimklAnimeIdPreference): String =
     SimklAnimeIdPreference.IMDB -> stringResource(Res.string.settings_tracking_anime_id_imdb)
     SimklAnimeIdPreference.MAL -> stringResource(Res.string.settings_tracking_anime_id_mal)
     SimklAnimeIdPreference.KITSU -> stringResource(Res.string.settings_tracking_anime_id_kitsu)
-    SimklAnimeIdPreference.TVDB -> stringResource(Res.string.settings_tracking_anime_id_tvdb)
 }

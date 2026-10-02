@@ -1,16 +1,17 @@
 package com.nuvio.app.features.catalog
 
-import com.nuvio.app.core.poster.CustomPosterUrlRepository
-import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.collection.TmdbCollectionSourceResolver
 import com.nuvio.app.features.collection.catalogRouteKey
+import com.nuvio.app.features.cloudstream.CloudStreamRepository
+import com.nuvio.app.features.cloudstream.toMetaPreview
 import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.library.sortLibraryItems
+import com.nuvio.app.features.library.toMetaPreview
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.filterReleasedItems
 import com.nuvio.app.features.trakt.TraktPublicListSourceResolver
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,25 +42,17 @@ object CatalogRepository {
         }
         activeRequest = request
         if (target is CatalogTarget.Library) {
-            observeInternalLibrary(request)
+            fetchInternalLibrary(request)
             return
         }
-        fetchPage(
-            request = request,
-            reset = true,
-            forceRefresh = force,
-        )
+        fetchPage(request = request, reset = true)
     }
 
     fun loadMore() {
         val request = activeRequest ?: return
         val current = _uiState.value
         if (current.isLoading || current.nextSkip == null) return
-        fetchPage(
-            request = request,
-            reset = false,
-            forceRefresh = false,
-        )
+        fetchPage(request = request, reset = false)
     }
 
     fun clear() {
@@ -87,7 +80,7 @@ object CatalogRepository {
         )
     }
 
-    private fun observeInternalLibrary(request: CatalogRequest) {
+    private fun fetchInternalLibrary(request: CatalogRequest) {
         activeJob?.cancel()
         _uiState.value = _uiState.value.copy(
             isLoading = true,
@@ -95,30 +88,47 @@ object CatalogRepository {
         )
 
         activeJob = scope.launch {
-            try {
+            runCatching {
                 val target = request.target as CatalogTarget.Library
                 LibraryRepository.ensureLoaded()
-                LibraryRepository.uiState.libraryCatalogStates(
-                    target, LibraryRepository.uiState.libraryCatalogOrders(target),
-                ).collect { state ->
-                    if (activeRequest != request) return@collect
-                    _uiState.value = state
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                if (activeRequest != request) return@launch
-                _uiState.value = CatalogUiState(
-                    errorMessage = error.message ?: getString(Res.string.catalog_load_failed),
+                val libraryState = LibraryRepository.uiState.value
+                val items = libraryState.sections
+                    .firstOrNull { it.type == target.sectionType }
+                    ?.items
+                    .orEmpty()
+                sortLibraryItems(
+                    items = items,
+                    selected = target.sortOption,
+                    sourceMode = libraryState.sourceMode,
                 )
-            }
+                    .map { it.toMetaPreview() }
+                    .let(::dedupeCatalogItems)
+            }.fold(
+                onSuccess = { items ->
+                    if (activeRequest != request) return@fold
+                    _uiState.value = CatalogUiState(
+                        items = items,
+                        isLoading = false,
+                        nextSkip = null,
+                        errorMessage = null,
+                    )
+                },
+                onFailure = { error ->
+                    if (activeRequest != request) return@fold
+                    _uiState.value = CatalogUiState(
+                        items = emptyList(),
+                        isLoading = false,
+                        nextSkip = null,
+                        errorMessage = error.message ?: getString(Res.string.catalog_load_failed),
+                    )
+                },
+            )
         }
     }
 
     private fun fetchPage(
         request: CatalogRequest,
         reset: Boolean,
-        forceRefresh: Boolean,
     ) {
         activeJob?.cancel()
         val current = _uiState.value
@@ -140,13 +150,34 @@ object CatalogRepository {
                         catalogId = target.catalogId,
                         genre = target.genre,
                         skip = requestedSkip.takeIf { it > 0 },
-                        forceRefresh = forceRefresh,
                     )
 
                     is CatalogTarget.CollectionSource -> fetchCollectionSourcePage(
                         target = target,
                         page = requestedSkip.takeIf { it > 0 } ?: 1,
                     )
+
+                    is CatalogTarget.CloudStream -> {
+                        val pageNumber = requestedSkip.takeIf { it > 0 } ?: 1
+                        val items = if (!target.searchQuery.isNullOrBlank()) {
+                            CloudStreamRepository.search(target.searchQuery, target.providerId)
+                                .firstOrNull()
+                                ?.getOrThrow()
+                                .orEmpty()
+                                .map { it.toMetaPreview() }
+                        } else {
+                            CloudStreamRepository.getMainPage(target.providerId, pageNumber).getOrThrow()
+                                .firstOrNull { it.first == target.categoryName }
+                                ?.second
+                                .orEmpty()
+                                .map { it.toMetaPreview() }
+                        }
+                        CatalogPage(
+                            items = items,
+                            rawItemCount = items.size,
+                            nextSkip = null,
+                        )
+                    }
 
                     is CatalogTarget.Library -> error(getString(Res.string.catalog_load_failed))
                 }.withUnreleasedFilter(request.hideUnreleasedContent)
@@ -168,10 +199,8 @@ object CatalogRepository {
                         loadedNewItems = loadedNewItems,
                         consecutiveDuplicatePages = if (reset) 0 else current.consecutiveDuplicatePages,
                     )
-                    CustomPosterUrlRepository.ensureLoaded()
-                    val posterPattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.HOME)
                     _uiState.value = CatalogUiState(
-                        items = mergedItems.withCustomPosterUrls(posterPattern),
+                        items = mergedItems,
                         isLoading = false,
                         nextSkip = paginationState.nextSkip,
                         consecutiveDuplicatePages = paginationState.consecutiveDuplicatePages,
@@ -218,8 +247,8 @@ private suspend fun fetchCollectionSourcePage(
         ?: error(getString(Res.string.catalog_load_failed))
 
     return when {
-        source.isTmdb -> TmdbCollectionSourceResolver.resolve(source = source, page = page)
-        source.isTrakt -> TraktPublicListSourceResolver.resolve(source = source, page = page)
+        source.isTmdb -> TmdbCollectionSourceResolver.resolveOrEmpty(source = source, page = page)
+        source.isTrakt -> TraktPublicListSourceResolver.resolveOrEmpty(source = source, page = page)
         else -> error(getString(Res.string.catalog_load_failed))
     }
 }

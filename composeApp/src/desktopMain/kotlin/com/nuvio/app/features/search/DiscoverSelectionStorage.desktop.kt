@@ -1,15 +1,24 @@
 package com.nuvio.app.features.search
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 import com.nuvio.app.core.storage.ProfileScopedKey
 
-internal actual object DiscoverSelectionStorage {
-    private val store = DesktopStorage.store("nuvio_discover_selection")
+actual object DiscoverSelectionStorage {
+    private const val preferencesName = "nuvio_discover_selection"
+    private const val catalogKey = "discover_catalog_key"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun loadCatalogKey(): String? =
-        store.getString(ProfileScopedKey.of("discover_catalog_key"))
+        preferences?.getString(ProfileScopedKey.of(catalogKey), null)
 
     actual fun saveCatalogKey(catalogKey: String) {
-        store.putString(ProfileScopedKey.of("discover_catalog_key"), catalogKey)
+        preferences
+            ?.edit()
+            ?.putString(ProfileScopedKey.of(DiscoverSelectionStorage.catalogKey), catalogKey)
+            ?.apply()
     }
 }

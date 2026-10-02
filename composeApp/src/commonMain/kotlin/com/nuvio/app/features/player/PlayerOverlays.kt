@@ -1,5 +1,14 @@
 package com.nuvio.app.features.player
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,25 +17,35 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeContent
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Brightness6
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Speed
+import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,22 +53,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
+import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.nuvioTypeScale
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_player_close
 import nuvio.composeapp.generated.resources.compose_player_episode_code_full
 import nuvio.composeapp.generated.resources.compose_player_go_back
 import nuvio.composeapp.generated.resources.compose_player_playback_error
+import nuvio.composeapp.generated.resources.compose_player_retry
 import nuvio.composeapp.generated.resources.compose_player_youre_watching
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
@@ -74,9 +104,202 @@ internal data class GestureFeedbackState(
     val secondaryMessageRes: StringResource? = null,
     val secondaryMessageArgs: List<Any> = emptyList(),
     val secondaryMessageColor: Color? = null,
-    val level: Float? = null,
+    val accentColor: Color? = null,
 )
 
+@Composable
+internal fun OpeningOverlay(
+    artwork: String?,
+    logo: String?,
+    title: String?,
+    onBack: () -> Unit,
+    horizontalSafePadding: Dp,
+    modifier: Modifier = Modifier,
+    message: String? = null,
+    progress: Float? = null,
+) {
+    val contentAlpha by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 700, delayMillis = 400, easing = LinearEasing),
+        label = "openingOverlayContentAlpha",
+    )
+    val pulse = rememberInfiniteTransition(label = "openingOverlayContentPulse")
+    val contentScale by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "openingOverlayContentScale",
+    )
+    var logoLoadError by remember(logo) { mutableStateOf(false) }
+    val logoUrl = logo?.takeIf { it.isNotBlank() }
+
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.85f)),
+    ) {
+        if (artwork != null) {
+            AsyncImage(
+                model = artwork,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.3f),
+                                Color.Black.copy(alpha = 0.6f),
+                                Color.Black.copy(alpha = 0.8f),
+                                Color.Black.copy(alpha = 0.9f),
+                            ),
+                        ),
+                    ),
+            )
+        }
+
+        NuvioBackButton(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
+                .padding(top = 20.dp, start = horizontalSafePadding, end = horizontalSafePadding + 20.dp)
+                ,
+            containerColor = Color.Black.copy(alpha = 0.3f),
+            contentColor = Color.White,
+            buttonSize = 44.dp,
+            iconSize = 24.dp,
+            contentDescription = stringResource(Res.string.compose_player_close),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val targetProgress = progress?.coerceIn(0f, 1f)
+            val animatedProgress by animateFloatAsState(
+                targetValue = targetProgress ?: 0f,
+                animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                label = "openingOverlayP2pProgress",
+            )
+            val progressActive = targetProgress != null
+            if (logoUrl != null && !logoLoadError) {
+                Box(
+                    modifier = Modifier
+                        .width(300.dp)
+                        .height(180.dp),
+                ) {
+                    AsyncImage(
+                        model = logoUrl,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = if (progressActive) 0.25f else contentAlpha
+                                if (!progressActive) {
+                                    scaleX = contentScale
+                                    scaleY = contentScale
+                                }
+                            },
+                        contentScale = ContentScale.Fit,
+                        onError = { logoLoadError = true },
+                    )
+                    if (progressActive) {
+                        AsyncImage(
+                            model = logoUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .drawWithContent {
+                                    clipRect(right = size.width * animatedProgress) {
+                                        this@drawWithContent.drawContent()
+                                    }
+                                },
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                }
+            } else if (!title.isNullOrBlank()) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    style = MaterialTheme.nuvioTypeScale.displayMd.copy(
+                        fontSize = 42.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    ),
+                    modifier = Modifier
+                        .padding(horizontal = 24.dp)
+                        .graphicsLayer {
+                            alpha = contentAlpha
+                            scaleX = contentScale
+                            scaleY = contentScale
+                        },
+                )
+            } else {
+                NuvioLoadingIndicator(
+                    color = Color(0xFFE50914),
+                    modifier = Modifier.size(54.dp),
+                )
+            }
+
+            val showHorizontalProgress = progressActive && logo == null
+            if (!message.isNullOrBlank() || showHorizontalProgress) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    message?.takeIf { it.isNotBlank() }?.let { loadingMessage ->
+                        Text(
+                            text = loadingMessage,
+                            color = Color.White.copy(alpha = 0.72f),
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp),
+                        )
+                    }
+                }
+                if (showHorizontalProgress) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(240.dp)
+                            .height(4.dp)
+                            .background(
+                                color = Color.White.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(2.dp),
+                            ),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(animatedProgress)
+                                .height(4.dp)
+                                .background(
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    shape = RoundedCornerShape(2.dp),
+                                ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 internal fun GestureFeedbackPill(
@@ -88,10 +311,10 @@ internal fun GestureFeedbackPill(
     } else {
         Color.Black.copy(alpha = 0.75f)
     }
-    val iconBackgroundColor = if (feedback.isDanger) {
-        Color(0xFFFF8A80).copy(alpha = 0.22f)
-    } else {
-        Color.White.copy(alpha = 0.15f)
+    val iconBackgroundColor = when {
+        feedback.isDanger -> Color(0xFFFF8A80).copy(alpha = 0.22f)
+        feedback.accentColor != null -> feedback.accentColor.copy(alpha = 0.24f)
+        else -> Color.White.copy(alpha = 0.15f)
     }
     val icon = when (feedback.icon) {
         GestureFeedbackIcon.Speed -> Icons.Rounded.Speed
@@ -101,7 +324,11 @@ internal fun GestureFeedbackPill(
         GestureFeedbackIcon.SeekForward -> Icons.Rounded.FastForward
         GestureFeedbackIcon.SeekBackward -> Icons.Rounded.FastRewind
     }
-    val iconTint = if (feedback.isDanger) Color(0xFFFFC1C1) else Color.White
+    val iconTint = when {
+        feedback.isDanger -> Color(0xFFFFC1C1)
+        feedback.accentColor != null -> feedback.accentColor
+        else -> Color.White
+    }
     val messageText = feedback.messageRes?.let { resource ->
         stringResource(resource, *feedback.messageArgs.toTypedArray())
     } ?: feedback.message.orEmpty()
@@ -283,11 +510,18 @@ internal fun PauseMetadataOverlay(
 internal fun ErrorModal(
     message: String,
     onDismiss: () -> Unit,
+    onRetry: () -> Unit,
 ) {
+    val title = stringResource(Res.string.compose_player_playback_error)
+    val retryFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        retryFocusRequester.requestFocus()
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.9f)),
+            .background(Color.Black.copy(alpha = 0.9f))
+            .semantics { paneTitle = title },
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -298,10 +532,11 @@ internal fun ErrorModal(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = stringResource(Res.string.compose_player_playback_error),
+                text = title,
                 style = MaterialTheme.nuvioTypeScale.displaySm.copy(fontWeight = FontWeight.Bold),
                 color = Color.White,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { heading() },
             )
             Text(
                 text = message,
@@ -315,8 +550,26 @@ internal fun ErrorModal(
                 modifier = Modifier
                     .padding(top = 4.dp)
                     .widthIn(min = 180.dp, max = 260.dp)
-                    .clickable(onClick = onDismiss),
+                    .focusRequester(retryFocusRequester)
+                    .clickable(role = Role.Button, onClick = onRetry),
                 color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text(
+                    text = stringResource(Res.string.compose_player_retry),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    style = MaterialTheme.nuvioTypeScale.bodyLg.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            Surface(
+                modifier = Modifier
+                    .widthIn(min = 180.dp, max = 260.dp)
+                    .clickable(role = Role.Button, onClick = onDismiss),
+                color = Color.White.copy(alpha = 0.12f),
                 shape = RoundedCornerShape(12.dp),
             ) {
                 Text(
@@ -325,7 +578,7 @@ internal fun ErrorModal(
                         .fillMaxWidth()
                         .padding(vertical = 12.dp),
                     style = MaterialTheme.nuvioTypeScale.bodyLg.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    color = Color.White.copy(alpha = 0.72f),
                     textAlign = TextAlign.Center,
                 )
             }

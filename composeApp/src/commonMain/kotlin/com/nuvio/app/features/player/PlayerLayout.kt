@@ -1,24 +1,17 @@
 package com.nuvio.app.features.player
 
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeContent
-import androidx.compose.foundation.layout.union
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nuvio.app.isDesktop
-import com.nuvio.app.isIos
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_resize_fill
 import nuvio.composeapp.generated.resources.compose_player_resize_fit
-import nuvio.composeapp.generated.resources.compose_player_resize_stretch
 import nuvio.composeapp.generated.resources.compose_player_resize_zoom
 import org.jetbrains.compose.resources.StringResource
 import kotlin.math.max
@@ -40,10 +33,61 @@ internal data class PlayerLayoutMetrics(
     val sideIconSize: Dp,
     val playButtonPadding: Dp,
     val playIconSize: Dp,
+    val topGradientHeight: Dp = 160.dp,
+    val bottomGradientHeight: Dp = 220.dp,
+    val actionIconSize: Dp = 18.dp,
+    val actionTextSize: TextUnit = 12.sp,
+    val actionHorizontalPadding: Dp = 12.dp,
+    val actionVerticalPadding: Dp = 12.dp,
+    val actionGap: Dp = 8.dp,
+    val actionCornerRadius: Dp = 22.dp,
+    val actionGroupHorizontalPadding: Dp = 4.dp,
+    val actionGroupVerticalPadding: Dp = 2.dp,
+    val timeRowHorizontalPadding: Dp = 14.dp,
+    val timeRowTopPadding: Dp = 4.dp,
+    val timeRowBottomPadding: Dp = 8.dp,
 ) {
     companion object {
-        fun fromWidth(width: Dp): PlayerLayoutMetrics =
-            when {
+        fun fromWidth(width: Dp, tvLayout: Boolean = false, height: Dp = 0.dp): PlayerLayoutMetrics {
+            if (tvLayout) {
+                val scale = when {
+                    width >= 1440.dp || height >= 900.dp -> 1.65f
+                    width >= 1024.dp || height >= 720.dp -> 1.5f
+                    else -> 1.35f
+                }
+                return PlayerLayoutMetrics(
+                    horizontalPadding = 52.dp * scale,
+                    verticalPadding = 36.dp * scale,
+                    titleSize = (28f * scale).sp,
+                    episodeInfoSize = (18f * scale).sp,
+                    metadataSize = (16f * scale).sp,
+                    centerGap = 104.dp * scale,
+                    centerLift = 30.dp * scale,
+                    sliderBottomOffset = 40.dp * scale,
+                    sliderTouchHeight = 36.dp * scale,
+                    sliderScaleY = 0.92f,
+                    timeSize = (16f * scale).sp,
+                    headerIconSize = 30.dp * scale,
+                    sideButtonPadding = 18.dp * scale,
+                    sideIconSize = 52.dp * scale,
+                    playButtonPadding = 24.dp * scale,
+                    playIconSize = 64.dp * scale,
+                    topGradientHeight = 180.dp * scale,
+                    bottomGradientHeight = 260.dp * scale,
+                    actionIconSize = 22.dp * scale,
+                    actionTextSize = (14f * scale).sp,
+                    actionHorizontalPadding = 14.dp * scale,
+                    actionVerticalPadding = 14.dp * scale,
+                    actionGap = 10.dp * scale,
+                    actionCornerRadius = 26.dp * scale,
+                    actionGroupHorizontalPadding = 6.dp * scale,
+                    actionGroupVerticalPadding = 4.dp * scale,
+                    timeRowHorizontalPadding = 18.dp * scale,
+                    timeRowTopPadding = 8.dp * scale,
+                    timeRowBottomPadding = 12.dp * scale,
+                )
+            }
+            return when {
                 width >= 1440.dp -> PlayerLayoutMetrics(
                     horizontalPadding = 28.dp,
                     verticalPadding = 24.dp,
@@ -117,6 +161,7 @@ internal data class PlayerLayoutMetrics(
                     playIconSize = 34.dp,
                 )
             }
+        }
     }
 }
 
@@ -129,26 +174,11 @@ internal fun playerHorizontalSafePadding(): Dp {
     return if (left > right) left else right
 }
 
-@Composable
-internal fun playerTimelineBottomInsets(metrics: PlayerLayoutMetrics): WindowInsets {
-    val safeInsets = WindowInsets.safeContent.only(WindowInsetsSides.Bottom)
-    val contentInsets = WindowInsets(bottom = metrics.sliderBottomOffset / 2)
-    return if (isIos) safeInsets.union(contentInsets) else safeInsets.add(contentInsets)
-}
-
 internal fun PlayerResizeMode.next(): PlayerResizeMode =
-    when (supportedOnCurrentPlatform()) {
-        PlayerResizeMode.Fit -> if (isDesktop) PlayerResizeMode.Zoom else PlayerResizeMode.Fill
+    when (this) {
+        PlayerResizeMode.Fit -> PlayerResizeMode.Fill
         PlayerResizeMode.Fill -> PlayerResizeMode.Zoom
-        PlayerResizeMode.Zoom -> if (isDesktop) PlayerResizeMode.Stretch else PlayerResizeMode.Fit
-        PlayerResizeMode.Stretch -> PlayerResizeMode.Fit
-    }
-
-internal fun PlayerResizeMode.supportedOnCurrentPlatform(): PlayerResizeMode =
-    when {
-        isDesktop && this == PlayerResizeMode.Fill -> PlayerResizeMode.Zoom
-        !isDesktop && this == PlayerResizeMode.Stretch -> PlayerResizeMode.Fit
-        else -> this
+        PlayerResizeMode.Zoom -> PlayerResizeMode.Fit
     }
 
 internal val PlayerResizeMode.labelRes: StringResource
@@ -156,7 +186,6 @@ internal val PlayerResizeMode.labelRes: StringResource
         PlayerResizeMode.Fit -> Res.string.compose_player_resize_fit
         PlayerResizeMode.Fill -> Res.string.compose_player_resize_fill
         PlayerResizeMode.Zoom -> Res.string.compose_player_resize_zoom
-        PlayerResizeMode.Stretch -> Res.string.compose_player_resize_stretch
     }
 
 internal fun formatPlaybackTime(positionMs: Long): String {
@@ -170,14 +199,6 @@ internal fun formatPlaybackTime(positionMs: Long): String {
         "${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
     }
 }
-
-internal fun formatPlaybackRuntime(positionMs: Long, durationMs: Long, showRemainingTime: Boolean): String =
-    if (showRemainingTime) {
-        val remainingMs = (durationMs.coerceAtLeast(0L) - positionMs.coerceAtLeast(0L)).coerceAtLeast(0L)
-        "−${formatPlaybackTime(remainingMs)}"
-    } else {
-        "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}"
-    }
 
 internal fun formatPlaybackSpeedLabel(speed: Float): String {
     val normalized = speed.toString().trimEnd('0').trimEnd('.')

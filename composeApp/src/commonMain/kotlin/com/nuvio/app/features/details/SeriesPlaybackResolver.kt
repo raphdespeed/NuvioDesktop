@@ -53,6 +53,50 @@ internal fun MetaDetails.firstReleasedPlayableEpisode(todayIsoDate: String): Met
         video.isReleasedBy(todayIsoDate)
     }
 
+internal fun MetaDetails.randomReleasedPlayableEpisode(
+    todayIsoDate: String,
+    currentSeason: Int?,
+    currentEpisode: Int?,
+): MetaVideo? {
+    val releasedEpisodes = sortedPlayableEpisodes()
+        .filter { video ->
+            normalizeSeasonNumber(video.season) > 0 &&
+                video.isReleasedBy(todayIsoDate) &&
+                video.available
+        }
+    if (releasedEpisodes.isEmpty()) return null
+
+    val currentVideoId = buildPlaybackVideoId(
+        content = WatchingContentRef(type = type, id = id),
+        seasonNumber = currentSeason,
+        episodeNumber = currentEpisode,
+    )
+    val poolWithoutCurrent = releasedEpisodes.filterNot { episode ->
+        buildPlaybackVideoId(
+            content = WatchingContentRef(type = type, id = id),
+            seasonNumber = episode.season,
+            episodeNumber = episode.episode,
+            fallbackVideoId = episode.id,
+        ) == currentVideoId
+    }
+    val candidates = poolWithoutCurrent.ifEmpty { releasedEpisodes }
+    val seed = buildString {
+        append(id)
+        append('|')
+        append(todayIsoDate)
+        append('|')
+        append(currentSeason)
+        append('|')
+        append(currentEpisode)
+        append('|')
+        candidates.forEach { episode ->
+            append(episode.id)
+            append(',')
+        }
+    }.hashCode() and Int.MAX_VALUE
+    return candidates[seed % candidates.size]
+}
+
 internal fun MetaDetails.nextReleasedEpisodeAfter(
     completedEntry: WatchProgressEntry,
     todayIsoDate: String,
@@ -147,7 +191,6 @@ internal fun MetaDetails.seriesPrimaryAction(
     preferFurthestEpisode: Boolean = true,
     showUnairedNextUp: Boolean = false,
     watchedKeys: Set<String> = emptySet(),
-    allowRewatch: Boolean = false,
 ): SeriesPrimaryAction? {
     val content = WatchingContentRef(type = type, id = id)
     val effectiveWatchedItems = buildList {
@@ -172,7 +215,6 @@ internal fun MetaDetails.seriesPrimaryAction(
         todayIsoDate = todayIsoDate,
         preferFurthestEpisode = preferFurthestEpisode,
         showUnairedNextUp = showUnairedNextUp,
-        allowRewatch = allowRewatch,
     )
 }
 
@@ -183,21 +225,16 @@ internal fun MetaDetails.seriesPrimaryAction(
     todayIsoDate: String,
     preferFurthestEpisode: Boolean = true,
     showUnairedNextUp: Boolean = false,
-    allowRewatch: Boolean = false,
 ): SeriesPrimaryAction? =
     decideSeriesPrimaryAction(
         content = content,
-        episodes = videos.filterNot { video ->
-            entries.any { entry -> entry.parentMetaId == content.id && entry.parentMetaType.equals(content.type, true) &&
-                video.season in entry.excludedNextUpSeasons }
-        }.map(MetaVideo::toDomainReleasedEpisode),
+        episodes = videos.map(MetaVideo::toDomainReleasedEpisode),
         progressRecords = entries.map(WatchProgressEntry::toDomainProgressRecord),
         watchedRecords = watchedItems.map(WatchedItem::toDomainWatchedRecord),
         todayIsoDate = todayIsoDate,
         preferFurthestEpisode = preferFurthestEpisode,
         showUnairedNextUp = showUnairedNextUp,
         defaultVideoId = defaultVideoId,
-        allowRewatch = allowRewatch,
     )?.toLegacySeriesPrimaryAction()
 
 internal fun MetaVideo.playLabel(): String =

@@ -54,6 +54,28 @@ private val desktopHttpClient = OkHttpClient.Builder()
 
 private const val truncationSuffix = "\n...[truncated]"
 
+actual suspend fun httpGetBytesWithHeaders(
+    url: String,
+    headers: Map<String, String>,
+    maxResponseBodyBytes: Int,
+): ByteArray = withContext(Dispatchers.IO) {
+    val request = buildDesktopRequest("GET",url,headers,"")
+    desktopHttpClient.newCall(request).execute().use { response ->
+        check(response.isSuccessful) { "HTTP ${response.code}" }
+        val body=response.body ?: error("Empty response")
+        require(body.contentLength() <= maxResponseBodyBytes) { "Response exceeds size limit" }
+        body.byteStream().use { input ->
+            val output=ByteArrayOutputStream();val buffer=ByteArray(8192)
+            while(true) {
+                val count=input.read(buffer);if(count<0)break
+                require(output.size().toLong()+count<=maxResponseBodyBytes.toLong()) { "Response exceeds size limit" }
+                output.write(buffer,0,count)
+            }
+            output.toByteArray()
+        }
+    }
+}
+
 actual suspend fun httpGetText(url: String): String =
     executeTextRequest(
         method = "GET",
@@ -104,7 +126,6 @@ actual suspend fun httpRequestRaw(
     body: String,
     followRedirects: Boolean,
     maxResponseBodyBytes: Int,
-    bodyBytes: ByteArray?,
 ): RawHttpResponse = withContext(Dispatchers.IO) {
     val client = if (followRedirects) {
         desktopHttpClient
@@ -114,7 +135,7 @@ actual suspend fun httpRequestRaw(
             .followSslRedirects(false)
             .build()
     }
-    val request = buildDesktopRequest(method, url, headers, body, bodyBytes)
+    val request = buildDesktopRequest(method, url, headers, body)
 
     client.newCall(request).execute().use { response ->
         RawHttpResponse(

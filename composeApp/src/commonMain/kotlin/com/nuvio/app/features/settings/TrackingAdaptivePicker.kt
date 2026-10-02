@@ -1,13 +1,12 @@
 package com.nuvio.app.features.settings
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,27 +14,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import com.nuvio.app.core.ui.DialogButton
-import com.nuvio.app.core.ui.DialogButtons
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioBottomSheetDivider
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.nuvio
-import com.nuvio.app.core.ui.SurfaceEdge
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_close
-import nuvio.composeapp.generated.resources.cd_selected
 import org.jetbrains.compose.resources.stringResource
 
 internal data class TrackingPickerOption<T>(
@@ -134,7 +129,6 @@ private fun <T> TrackingPickerDialog(
                 .widthIn(max = tokens.components.dialogMaxWidth),
             shape = tokens.shapes.dialog,
             color = tokens.colors.surfaceDialog,
-            border = BorderStroke(tokens.borders.thin, SurfaceEdge),
         ) {
             TrackingPickerContent(
                 title = title,
@@ -212,17 +206,15 @@ private fun <T> TrackingPickerContent(
         }
 
         if (isTablet) {
-            DialogButtons(
-                modifier = Modifier.padding(
-                    start = horizontalPadding,
-                    end = horizontalPadding,
-                    bottom = horizontalPadding,
-                ),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPadding, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
             ) {
-                DialogButton(
-                    text = stringResource(Res.string.action_close),
-                    onClick = onDismiss,
-                )
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(Res.string.action_close))
+                }
             }
         }
     }
@@ -235,26 +227,16 @@ private fun <T> TrackingPickerOptionRow(
     isTablet: Boolean,
     onClick: () -> Unit,
 ) {
-    val tokens = MaterialTheme.nuvio
     val description = listOfNotNull(
         option.description?.takeIf(String::isNotBlank),
         option.unavailableReason?.takeIf(String::isNotBlank),
     ).joinToString("\n").takeIf(String::isNotBlank)
     SettingsNavigationRow(
         title = option.title,
-        description = description,
+        description = description.orEmpty(),
+        icon = Icons.Rounded.Check.takeIf { selected },
         enabled = option.enabled,
         isTablet = isTablet,
-        trailingContent = {
-            if (selected) {
-                Icon(
-                    imageVector = Icons.Rounded.Check,
-                    contentDescription = stringResource(Res.string.cd_selected),
-                    tint = tokens.colors.accent,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-        },
         onClick = onClick,
     )
 }

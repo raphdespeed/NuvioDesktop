@@ -2,6 +2,8 @@ package com.nuvio.app.core.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.painter.Painter
+import nuvio.composeapp.generated.resources.discord_mark
+import nuvio.composeapp.generated.resources.github_mark
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.ic_player_aspect_ratio
 import nuvio.composeapp.generated.resources.ic_player_audio_filled
@@ -22,8 +24,8 @@ actual fun appIconPainter(icon: AppIconResource): Painter =
             AppIconResource.PlayerAspectRatio -> Res.drawable.ic_player_aspect_ratio
             AppIconResource.PlayerSubtitles -> Res.drawable.ic_player_subtitles
             AppIconResource.PlayerAudioFilled -> Res.drawable.ic_player_audio_filled
-            AppIconResource.PlayerSource -> Res.drawable.ic_player_source
-            AppIconResource.PlayerEpisodes -> Res.drawable.ic_player_episodes
+            AppIconResource.DiscordMark -> Res.drawable.discord_mark
+            AppIconResource.GithubMark -> Res.drawable.github_mark
             AppIconResource.LibraryAddPlus -> Res.drawable.library_add_plus
         },
     )

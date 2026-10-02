@@ -7,6 +7,6 @@ class DesktopPlatform : Platform {
 actual fun getPlatform(): Platform = DesktopPlatform()
 
 internal actual val isIos: Boolean = false
-internal actual val isDesktop: Boolean = true
-internal actual val isWindows: Boolean = System.getProperty("os.name").orEmpty().lowercase().contains("win")
-internal actual val supportsPosterNavigationMotion: Boolean = false
+internal val isDesktop: Boolean = true
+internal val isWindows: Boolean = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+internal val supportsPosterNavigationMotion: Boolean = false

@@ -8,11 +8,9 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,8 +44,6 @@ private data class AddonPushItem(
     @SerialName("sort_order") val sortOrder: Int = 0,
 )
 
-private const val ADDON_PUSH_DEBOUNCE_MS = 500L
-
 object AddonRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("AddonRepository")
@@ -56,9 +52,9 @@ object AddonRepository {
     val uiState: StateFlow<AddonsUiState> = _uiState.asStateFlow()
 
     private var initialized = false
+    private var pulledFromServer = false
     private var currentProfileId: Int = 1
     private val activeRefreshJobs = mutableMapOf<String, Job>()
-    private val pushJobsByProfile = mutableMapOf<Int, Job>()
 
     fun initialize() {
         val effectiveProfileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
@@ -97,21 +93,21 @@ object AddonRepository {
         cancelActiveRefreshes()
         currentProfileId = effectiveProfileId
         initialized = false
+        pulledFromServer = false
         _uiState.value = AddonsUiState()
     }
 
     fun clearLocalState() {
         cancelActiveRefreshes()
-        pushJobsByProfile.values.forEach(Job::cancel)
-        pushJobsByProfile.clear()
         currentProfileId = 1
         initialized = false
+        pulledFromServer = false
         _uiState.value = AddonsUiState()
     }
 
     suspend fun pullFromServer(profileId: Int) {
         currentProfileId = resolveEffectiveProfileId(profileId)
-        log.i { "pullFromServer() — profileId=$profileId, initialized=$initialized" }
+        log.i { "pullFromServer() — profileId=$profileId, initialized=$initialized, pulledFromServer=$pulledFromServer" }
         runCatching {
             val rows = SupabaseProvider.client.postgrest
                 .from("addons")
@@ -133,6 +129,65 @@ object AddonRepository {
             log.i { "pullFromServer() — server returned ${rows.size} addons" }
             urls.forEachIndexed { i, u -> log.d { "  server[$i]: $u" } }
 
+            if (urls.isEmpty() && !pulledFromServer) {
+                val localUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
+                log.i { "pullFromServer() — server empty, local has ${localUrls.size} addons" }
+                if (localUrls.isNotEmpty()) {
+                    log.i { "pullFromServer() — migrating local addons to server for profile $currentProfileId" }
+                    initialize()
+                    pulledFromServer = true
+                    val enabledByUrl = loadLocalEnabledStates()
+                    val addons = localUrls.mapIndexed { index, addonUrl ->
+                        val manifestUrl = ensureManifestSuffix(addonUrl)
+                        AddonPushItem(
+                            url = manifestUrl,
+                            name = _uiState.value.addons
+                                .find { it.manifestUrl == manifestUrl }?.manifest?.name ?: "",
+                            enabled = enabledByUrl[manifestUrl]
+                                ?: _uiState.value.addons.find { it.manifestUrl == manifestUrl }?.enabled
+                                ?: true,
+                            sortOrder = index,
+                        )
+                    }
+                    val params = buildJsonObject {
+                        put("p_profile_id", currentProfileId)
+                        put("p_addons", json.encodeToJsonElement(addons))
+                        putSyncOriginClientId()
+                    }
+                    SupabaseProvider.client.postgrest.rpc("sync_push_addons", params)
+                    log.i { "pullFromServer() — migration push done (${addons.size} addons)" }
+                    return
+                }
+            }
+
+            if (urls.isEmpty()) {
+                val localUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
+                if (localUrls.isNotEmpty()) {
+                    log.w { "pullFromServer() — remote empty while local has ${localUrls.size} addons; preserving local addons" }
+                    val enabledByUrl = loadLocalEnabledStates()
+                    val existingByUrl = _uiState.value.addons.associateBy(ManagedAddon::manifestUrl)
+                    _uiState.value = AddonsUiState(
+                        addons = localUrls.map { url ->
+                            existingByUrl[url].toPendingAddon(
+                                manifestUrl = url,
+                                enabled = enabledByUrl[url],
+                            )
+                        },
+                    )
+                    persist()
+                    localUrls.forEach { url ->
+                        val existing = existingByUrl[url]
+                        val addon = _uiState.value.addons.firstOrNull { it.manifestUrl == url }
+                        if (addon?.enabled == true && (existing == null || (addon.manifest == null && !addon.isRefreshing))) {
+                            refreshAddon(url)
+                        }
+                    }
+                    pulledFromServer = true
+                    initialized = true
+                    return
+                }
+            }
+
             val existingByUrl = _uiState.value.addons.associateBy(ManagedAddon::manifestUrl)
             _uiState.value = AddonsUiState(
                 addons = urls.map { url ->
@@ -152,6 +207,7 @@ object AddonRepository {
                     refreshAddon(url)
                 }
             }
+            pulledFromServer = true
             initialized = true
             log.i { "pullFromServer() — applied ${urls.size} addons to state" }
         }.onFailure { e ->
@@ -185,7 +241,7 @@ object AddonRepository {
 
         val manifest = try {
             withContext(Dispatchers.Default) {
-                val payload = fetchAddonResponseText(manifestUrl)
+                val payload = httpGetText(manifestUrl)
                 AddonManifestParser.parse(
                     manifestUrl = manifestUrl,
                     payload = payload,
@@ -213,20 +269,17 @@ object AddonRepository {
     fun removeAddon(manifestUrl: String) {
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
         log.i { "removeAddon() — $manifestUrl" }
-        var changed = false
         _uiState.update { current ->
-            val updatedAddons = current.addons.filterNot { it.manifestUrl == manifestUrl }
-            changed = updatedAddons.size != current.addons.size
-            if (changed) current.copy(addons = updatedAddons) else current
+            current.copy(
+                addons = current.addons.filterNot { it.manifestUrl == manifestUrl },
+            )
         }
-        if (!changed) return
         persist()
         pushToServer()
     }
 
     fun moveAddon(fromIndex: Int, toIndex: Int) {
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
-        var changed = false
         _uiState.update { current ->
             val addons = current.addons
             if (
@@ -240,10 +293,8 @@ object AddonRepository {
             val reordered = addons.toMutableList()
             val movingAddon = reordered.removeAt(fromIndex)
             reordered.add(toIndex, movingAddon)
-            changed = true
             current.copy(addons = reordered)
         }
-        if (!changed) return
         persist()
         pushToServer()
     }
@@ -251,21 +302,18 @@ object AddonRepository {
     fun setAddonEnabled(manifestUrl: String, enabled: Boolean) {
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
         var shouldRefresh = false
-        var changed = false
         _uiState.update { current ->
             current.copy(
                 addons = current.addons.map { addon ->
                     if (addon.manifestUrl != manifestUrl || addon.enabled == enabled) {
                         addon
                     } else {
-                        changed = true
                         shouldRefresh = enabled && addon.manifest == null && !addon.isRefreshing
                         addon.copy(enabled = enabled)
                     }
                 },
             )
         }
-        if (!changed) return
         persist()
         pushToServer()
         if (shouldRefresh) {
@@ -275,17 +323,11 @@ object AddonRepository {
 
     fun refreshAll() {
         _uiState.value.addons.filter { it.enabled }.distinctBy { it.manifestUrl }.forEach { addon ->
-            refreshAddon(
-                manifestUrl = addon.manifestUrl,
-                forceRefresh = true,
-            )
+            refreshAddon(addon.manifestUrl)
         }
     }
 
-    fun refreshAddon(
-        manifestUrl: String,
-        forceRefresh: Boolean = false,
-    ) {
+    fun refreshAddon(manifestUrl: String) {
         val existingJob = activeRefreshJobs[manifestUrl]
         if (existingJob?.isActive == true) return
 
@@ -294,10 +336,7 @@ object AddonRepository {
         refreshJob = scope.launch {
             try {
                 val result = runCatching {
-                    val payload = fetchAddonResponseText(
-                        url = manifestUrl,
-                        forceRefresh = forceRefresh,
-                    )
+                    val payload = httpGetText(manifestUrl)
                     AddonManifestParser.parse(
                         manifestUrl = manifestUrl,
                         payload = payload,
@@ -339,23 +378,22 @@ object AddonRepository {
     }
 
     private fun pushToServer() {
-        if (isUsingPrimaryAddonsFromSecondaryProfile()) return
-        val profileId = currentProfileId
-        val addons = _uiState.value.addons
-            .distinctBy { it.manifestUrl }
-            .mapIndexed { index, addon ->
-                AddonPushItem(
-                    url = addon.manifestUrl,
-                    name = addon.userSetName?.takeIf { it.isNotBlank() } ?: addon.manifest?.name ?: "",
-                    enabled = addon.enabled,
-                    sortOrder = index,
-                )
-            }
-        pushJobsByProfile[profileId]?.cancel()
-        var pushJob: Job? = null
-        pushJob = scope.launch {
-            try {
-                delay(ADDON_PUSH_DEBOUNCE_MS)
+        scope.launch {
+            runCatching {
+                if (isUsingPrimaryAddonsFromSecondaryProfile()) {
+                    return@runCatching
+                }
+                val profileId = currentProfileId
+                val addons = _uiState.value.addons
+                    .distinctBy { it.manifestUrl }
+                    .mapIndexed { index, addon ->
+                        AddonPushItem(
+                            url = addon.manifestUrl,
+                            name = addon.userSetName?.takeIf { it.isNotBlank() } ?: addon.manifest?.name ?: "",
+                            enabled = addon.enabled,
+                            sortOrder = index,
+                        )
+                    }
                 log.d { "pushToServer() — profileId=$profileId, pushing ${addons.size} addons" }
                 val params = buildJsonObject {
                     put("p_profile_id", profileId)
@@ -364,17 +402,10 @@ object AddonRepository {
                 }
                 SupabaseProvider.client.postgrest.rpc("sync_push_addons", params)
                 log.d { "pushToServer() — success" }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                log.e(error) { "pushToServer() — FAILED" }
-            } finally {
-                if (pushJobsByProfile[profileId] === pushJob) {
-                    pushJobsByProfile.remove(profileId)
-                }
+            }.onFailure { e ->
+                log.e(e) { "pushToServer() — FAILED" }
             }
         }
-        pushJobsByProfile[profileId] = pushJob
     }
 
     private fun markRefreshing(manifestUrl: String) {
@@ -465,8 +496,7 @@ private fun ensureManifestSuffix(url: String): String {
     val path = url.substringBefore("?").trimEnd('/')
     val query = url.substringAfter("?", "")
     val withSuffix = if (path.endsWith("/manifest.json")) path else "$path/manifest.json"
-    val manifestUrl = if (query.isEmpty()) withSuffix else "$withSuffix?$query"
-    return manifestUrl.encodeUnsafeHttpUrlCharacters()
+    return if (query.isEmpty()) withSuffix else "$withSuffix?$query"
 }
 
 private fun normalizeManifestUrl(rawUrl: String): String {
@@ -488,6 +518,5 @@ private fun normalizeManifestUrl(rawUrl: String): String {
         "$path/manifest.json"
     }
 
-    val manifestUrl = if (query.isEmpty()) manifestPath else "$manifestPath?$query"
-    return manifestUrl.encodeUnsafeHttpUrlCharacters()
+    return if (query.isEmpty()) manifestPath else "$manifestPath?$query"
 }

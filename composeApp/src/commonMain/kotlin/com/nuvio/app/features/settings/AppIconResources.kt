@@ -17,7 +17,7 @@ internal val AppIconOption.labelResource: StringResource
 
 internal val AppIconOption.previewResource: DrawableResource
     get() = when (this) {
-        AppIconOption.ORIGINAL -> Res.drawable.app_icon_original
+        AppIconOption.ORIGINAL -> Res.drawable.app_icon_speedy_preview
         AppIconOption.ARCTIC_BLUE -> Res.drawable.app_icon_arctic_blue
         AppIconOption.EMERALD -> Res.drawable.app_icon_emerald
         AppIconOption.ROSE_GOLD -> Res.drawable.app_icon_rose_gold
@@ -35,23 +35,11 @@ internal val AppIconOption.wordmarkResource: DrawableResource
         AppIconOption.GRAPHITE -> Res.drawable.app_logo_wordmark_graphite
     }
 
-
-internal val AppIconOption.transparentPreviewResource: DrawableResource
-    get() = when (this) {
-        AppIconOption.ORIGINAL -> Res.drawable.app_icon_original_transparent
-        AppIconOption.ARCTIC_BLUE -> Res.drawable.app_icon_arctic_blue_transparent
-        AppIconOption.EMERALD -> Res.drawable.app_icon_emerald_transparent
-        AppIconOption.ROSE_GOLD -> Res.drawable.app_icon_rose_gold_transparent
-        AppIconOption.COPPER -> Res.drawable.app_icon_copper_transparent
-        AppIconOption.GRAPHITE -> Res.drawable.app_icon_graphite_transparent
-    }
-
-internal fun AppTheme.wordmarkResource(fallback: AppIconOption): DrawableResource =
-    when (this) {
-        AppTheme.GOLD -> Res.drawable.app_logo_wordmark_gold
-        AppTheme.JADE -> AppIconOption.EMERALD.wordmarkResource
-        AppTheme.ROSE_GOLD -> AppIconOption.ROSE_GOLD.wordmarkResource
-        AppTheme.ARCTIC_BLUE -> AppIconOption.ARCTIC_BLUE.wordmarkResource
-        AppTheme.GRAPHITE -> AppIconOption.GRAPHITE.wordmarkResource
-        else -> fallback.wordmarkResource
-    }
+internal fun AppTheme.wordmarkResource(fallback: AppIconOption): DrawableResource = when (this) {
+    AppTheme.GOLD -> AppIconOption.COPPER.wordmarkResource
+    AppTheme.JADE -> AppIconOption.EMERALD.wordmarkResource
+    AppTheme.ROSE_GOLD -> AppIconOption.ROSE_GOLD.wordmarkResource
+    AppTheme.ARCTIC_BLUE -> AppIconOption.ARCTIC_BLUE.wordmarkResource
+    AppTheme.GRAPHITE -> AppIconOption.GRAPHITE.wordmarkResource
+    else -> fallback.wordmarkResource
+}

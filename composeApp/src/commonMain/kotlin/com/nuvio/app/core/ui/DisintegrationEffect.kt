@@ -36,33 +36,22 @@ fun DisintegratingContainer(
     onDisintegrated: () -> Unit,
     modifier: Modifier = Modifier,
     durationMillis: Int = 1500,
-    onDisintegrationStarted: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
-    if (!disintegrating) {
-        Box(modifier = modifier) {
-            content()
-        }
-        return
-    }
-
     val graphicsLayer = rememberGraphicsLayer()
     val progress = remember { Animatable(0f) }
     var field by remember { mutableStateOf<AshField?>(null) }
     val seed = remember { Random.nextLong() }
     val onDisintegratedState = rememberUpdatedState(onDisintegrated)
-    val onDisintegrationStartedState = rememberUpdatedState(onDisintegrationStarted)
 
     LaunchedEffect(disintegrating) {
         if (!disintegrating) return@LaunchedEffect
         val bitmap = runCatching { graphicsLayer.toImageBitmap() }.getOrNull()
         if (bitmap == null) {
-            onDisintegrationStartedState.value()
             onDisintegratedState.value()
             return@LaunchedEffect
         }
         field = withContext(Dispatchers.Default) { buildAshField(bitmap, seed) }
-        onDisintegrationStartedState.value()
         progress.snapTo(0f)
         progress.animateTo(
             targetValue = 1f,

@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
 @Composable
-internal fun PlayerScreen(
+fun PlayerScreen(
     profileId: Int,
     title: String,
     sourceUrl: String,
@@ -18,8 +18,7 @@ internal fun PlayerScreen(
     streamSubtitle: String?,
     initialBingeGroup: String? = null,
     pauseDescription: String? = null,
-    onBack: PlayerBackRequest,
-    onSystemBackHandlerChanged: (handler: (() -> Unit)?) -> Unit = {},
+    onBack: () -> Unit,
     onOpenInExternalPlayer: ((ExternalPlayerPlaybackRequest) -> Unit)? = null,
     onOpenExternalUrl: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -42,7 +41,7 @@ internal fun PlayerScreen(
     initialPositionMs: Long = 0L,
     initialProgressFraction: Float? = null,
     contentLanguage: String? = null,
-    launchId: Long? = null,
+    randomEpisodeMode: Boolean = false,
 ) {
     PlayerScreenContent(
         PlayerScreenArgs(
@@ -60,7 +59,6 @@ internal fun PlayerScreen(
             initialBingeGroup = initialBingeGroup,
             pauseDescription = pauseDescription,
             onBack = onBack,
-            onSystemBackHandlerChanged = onSystemBackHandlerChanged,
             onOpenInExternalPlayer = onOpenInExternalPlayer,
             onOpenExternalUrl = onOpenExternalUrl,
             modifier = modifier,
@@ -83,7 +81,7 @@ internal fun PlayerScreen(
             initialPositionMs = initialPositionMs,
             initialProgressFraction = initialProgressFraction,
             contentLanguage = contentLanguage,
-            launchId = launchId,
+            randomEpisodeMode = randomEpisodeMode,
         )
     )
 }

@@ -1,20 +1,13 @@
 package com.nuvio.app.features.home
 
-import com.nuvio.app.features.addons.AddonRepository
-import androidx.compose.ui.text.intl.Locale
 import com.nuvio.app.features.addons.ManagedAddon
-import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.collection.Collection
 import com.nuvio.app.features.collection.CollectionRepository
 import kotlinx.atomicfu.atomic
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -40,17 +33,26 @@ data class HomeCatalogSettingsItem(
 
 data class HomeCatalogSettingsUiState(
     val heroEnabled: Boolean = true,
+    val heroAutoScrollEnabled: Boolean = true,
+    val heroMotionPreviewEnabled: Boolean = false,
     val showCatalogType: Boolean = true,
     val hideUnreleasedContent: Boolean = false,
+    val hideCatalogUnderline: Boolean = false,
     val items: List<HomeCatalogSettingsItem> = emptyList(),
 ) {
     val signature: String
         get() = buildString {
             append(heroEnabled)
             append('|')
+            append(heroAutoScrollEnabled)
+            append('|')
+            append(heroMotionPreviewEnabled)
+            append('|')
             append(showCatalogType)
             append('|')
             append(hideUnreleasedContent)
+            append('|')
+            append(hideCatalogUnderline)
             append('|')
             append(
                 items.joinToString(separator = "|") { item ->
@@ -69,13 +71,16 @@ internal data class HomeCatalogPreference(
 
 internal data class HomeCatalogSettingsSnapshot(
     val heroEnabled: Boolean,
+    val heroAutoScrollEnabled: Boolean,
+    val heroMotionPreviewEnabled: Boolean,
     val showCatalogType: Boolean,
     val hideUnreleasedContent: Boolean,
+    val hideCatalogUnderline: Boolean,
     val preferences: Map<String, HomeCatalogPreference>,
 )
 
 @Serializable
-private data class StoredHomeCatalogPreference(
+internal data class StoredHomeCatalogPreference(
     val key: String,
     val customTitle: String = "",
     val enabled: Boolean = true,
@@ -83,11 +88,27 @@ private data class StoredHomeCatalogPreference(
     val order: Int = 0,
 )
 
+internal class HomeCatalogPreferenceSnapshotStore(
+    initial: Map<String, StoredHomeCatalogPreference> = emptyMap(),
+) {
+    private val snapshotRef = atomic<Map<String, StoredHomeCatalogPreference>>(initial.toMap())
+
+    val value: Map<String, StoredHomeCatalogPreference>
+        get() = snapshotRef.value
+
+    fun publish(snapshot: Map<String, StoredHomeCatalogPreference>) {
+        snapshotRef.value = snapshot.toMap()
+    }
+}
+
 @Serializable
 private data class StoredHomeCatalogSettingsPayload(
     val heroEnabled: Boolean = true,
+    val heroAutoScrollEnabled: Boolean = true,
+    val heroMotionPreviewEnabled: Boolean = false,
     val showCatalogType: Boolean = true,
     val hideUnreleasedContent: Boolean = false,
+    val hideCatalogUnderline: Boolean = false,
     val items: List<StoredHomeCatalogPreference> = emptyList(),
 )
 
@@ -102,42 +123,33 @@ object HomeCatalogSettingsRepository {
     private val _uiState = MutableStateFlow(HomeCatalogSettingsUiState())
     val uiState: StateFlow<HomeCatalogSettingsUiState> = _uiState.asStateFlow()
 
-    private val emptySnapshot = HomeCatalogSettingsSnapshot(
-        heroEnabled = true,
-        showCatalogType = true,
-        hideUnreleasedContent = false,
-        preferences = emptyMap(),
-    )
-    private val snapshotRef = atomic(emptySnapshot)
-    private val syncMutex = Mutex()
     private var hasLoaded = false
-    private var lastPersistedPayload: String? = null
     private var definitions: List<HomeCatalogDefinition> = emptyList()
     private var collectionDefinitions: List<CollectionCatalogDefinition> = emptyList()
-    private var lastCatalogSync: Triple<List<ManagedAddon>, List<Collection>, String>? = null
-    private var lastCollectionSync: Pair<List<Collection>, String>? = null
-    private val preferencesRef = atomic<Map<String, StoredHomeCatalogPreference>>(emptyMap())
+    private val preferenceSnapshots = HomeCatalogPreferenceSnapshotStore()
     private var preferences: Map<String, StoredHomeCatalogPreference>
-        get() = preferencesRef.value
+        get() = preferenceSnapshots.value
         set(value) {
-            preferencesRef.value = value
+            preferenceSnapshots.publish(value)
         }
     private var heroEnabled = true
+    private var heroAutoScrollEnabled = true
+    private var heroMotionPreviewEnabled = false
     private var showCatalogType = true
     private var hideUnreleasedContent = false
+    private var hideCatalogUnderline = false
 
     fun onProfileChanged() {
         hasLoaded = false
         preferences = emptyMap()
         heroEnabled = true
+        heroAutoScrollEnabled = true
+        heroMotionPreviewEnabled = false
         showCatalogType = true
         hideUnreleasedContent = false
+        hideCatalogUnderline = false
         definitions = emptyList()
         collectionDefinitions = emptyList()
-        snapshotRef.value = emptySnapshot
-        lastPersistedPayload = null
-        lastCatalogSync = null
-        lastCollectionSync = null
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
@@ -145,34 +157,20 @@ object HomeCatalogSettingsRepository {
         hasLoaded = false
         definitions = emptyList()
         collectionDefinitions = emptyList()
-        lastCatalogSync = null
-        lastCollectionSync = null
         preferences = emptyMap()
         heroEnabled = true
+        heroAutoScrollEnabled = true
+        heroMotionPreviewEnabled = false
         showCatalogType = true
         hideUnreleasedContent = false
-        snapshotRef.value = emptySnapshot
-        lastPersistedPayload = null
+        hideCatalogUnderline = false
         _uiState.value = HomeCatalogSettingsUiState()
     }
 
-    suspend fun syncCatalogs(addons: List<ManagedAddon>) = withContext(Dispatchers.Default) {
-        syncMutex.withLock {
-            syncCatalogsInternal(addons)
-        }
-    }
-
-    private fun syncCatalogsInternal(addons: List<ManagedAddon>) {
+    fun syncCatalogs(addons: List<ManagedAddon>) {
         ensureLoaded()
-        val collections = CollectionRepository.collections.value
-        val syncInput = Triple(addons, collections, Locale.current.toLanguageTag())
-        if (lastCatalogSync == syncInput) return
         definitions = buildHomeCatalogDefinitions(addons)
-        collectionDefinitions = buildCollectionDefinitions(collections)
-        lastCatalogSync = syncInput
-        lastCollectionSync = lastCollectionSync?.takeIf {
-            it.first == collections && it.second == syncInput.third
-        }
+        collectionDefinitions = buildCollectionDefinitions(CollectionRepository.collections.value)
         if (definitions.isEmpty() && collectionDefinitions.isEmpty()) {
             publish()
             return
@@ -183,28 +181,9 @@ object HomeCatalogSettingsRepository {
         persist()
     }
 
-    suspend fun syncCollections(
-        collections: List<Collection>,
-        addons: List<ManagedAddon> = AddonRepository.uiState.value.addons.enabledAddons(),
-    ) = withContext(Dispatchers.Default) {
-        syncMutex.withLock {
-            syncCollectionsInternal(collections = collections, addons = addons)
-        }
-    }
-
-    private fun syncCollectionsInternal(
-        collections: List<Collection>,
-        addons: List<ManagedAddon>,
-    ) {
+    fun syncCollections(collections: List<Collection>) {
         ensureLoaded()
-        val syncInput = collections to Locale.current.toLanguageTag()
-        if (lastCollectionSync == syncInput) return
-        if (definitions.isEmpty()) definitions = buildHomeCatalogDefinitions(addons)
         collectionDefinitions = buildCollectionDefinitions(collections)
-        lastCatalogSync = lastCatalogSync?.takeIf {
-            it.second == collections && it.third == syncInput.second
-        }
-        lastCollectionSync = syncInput
         normalizePreferences()
         enforcePinnedCollectionsAtTop()
         publish()
@@ -214,16 +193,47 @@ object HomeCatalogSettingsRepository {
 
     internal fun snapshot(): HomeCatalogSettingsSnapshot {
         ensureLoaded()
-        return snapshotRef.value
+        val currentPreferences = preferences
+        return HomeCatalogSettingsSnapshot(
+            heroEnabled = heroEnabled,
+            heroAutoScrollEnabled = heroAutoScrollEnabled,
+            heroMotionPreviewEnabled = heroMotionPreviewEnabled,
+            showCatalogType = showCatalogType,
+            hideUnreleasedContent = hideUnreleasedContent,
+            hideCatalogUnderline = hideCatalogUnderline,
+            preferences = currentPreferences.mapValues { (_, value) ->
+                HomeCatalogPreference(
+                    customTitle = value.customTitle,
+                    enabled = value.enabled,
+                    heroSourceEnabled = value.heroSourceEnabled,
+                    order = value.order,
+                )
+            },
+        )
     }
 
     fun setHeroEnabled(enabled: Boolean) {
         ensureLoaded()
-        if (heroEnabled == enabled) return
         heroEnabled = enabled
         publish()
         persist()
         HomeRepository.applyCurrentSettings()
+    }
+
+    fun setHeroAutoScrollEnabled(enabled: Boolean) {
+        ensureLoaded()
+        if (heroAutoScrollEnabled == enabled) return
+        heroAutoScrollEnabled = enabled
+        publish()
+        persist()
+    }
+
+    fun setHeroMotionPreviewEnabled(enabled: Boolean) {
+        ensureLoaded()
+        if (heroMotionPreviewEnabled == enabled) return
+        heroMotionPreviewEnabled = enabled
+        publish()
+        persist()
     }
 
     fun setShowCatalogType(enabled: Boolean) {
@@ -233,6 +243,15 @@ object HomeCatalogSettingsRepository {
         publish()
         persist()
         HomeRepository.applyCurrentSettings()
+        HomeCatalogSettingsSyncService.triggerPush()
+    }
+
+    fun setHideCatalogUnderline(enabled: Boolean) {
+        ensureLoaded()
+        if (hideCatalogUnderline == enabled) return
+        hideCatalogUnderline = enabled
+        publish()
+        persist()
         HomeCatalogSettingsSyncService.triggerPush()
     }
 
@@ -273,8 +292,11 @@ object HomeCatalogSettingsRepository {
     fun resetToDefaults() {
         ensureLoaded()
         heroEnabled = true
+        heroAutoScrollEnabled = true
+        heroMotionPreviewEnabled = false
         showCatalogType = true
         hideUnreleasedContent = false
+        hideCatalogUnderline = false
         preferences = emptyMap()
         normalizePreferences()
         publish()
@@ -323,10 +345,12 @@ object HomeCatalogSettingsRepository {
         }.getOrNull()
 
         if (parsedPayload != null) {
-            lastPersistedPayload = payload
             heroEnabled = parsedPayload.heroEnabled
+            heroAutoScrollEnabled = parsedPayload.heroAutoScrollEnabled
+            heroMotionPreviewEnabled = parsedPayload.heroMotionPreviewEnabled
             showCatalogType = parsedPayload.showCatalogType
             hideUnreleasedContent = parsedPayload.hideUnreleasedContent
+            hideCatalogUnderline = parsedPayload.hideCatalogUnderline
             preferences = parsedPayload.items.associateBy { it.key }
             publish()
             return
@@ -385,26 +409,15 @@ object HomeCatalogSettingsRepository {
                 order = stored?.order ?: nextOrder++,
             )
         }
-        preferences = normalized.toMap()
+        preferences = normalized
     }
 
     private fun publish() {
-        snapshotRef.value = HomeCatalogSettingsSnapshot(
-            heroEnabled = heroEnabled,
-            showCatalogType = showCatalogType,
-            hideUnreleasedContent = hideUnreleasedContent,
-            preferences = preferences.mapValues { (_, value) ->
-                HomeCatalogPreference(
-                    customTitle = value.customTitle,
-                    enabled = value.enabled,
-                    heroSourceEnabled = value.heroSourceEnabled,
-                    order = value.order,
-                )
-            },
-        )
+        val currentPreferences = preferences
+        val collectionMap = collectionDefinitions.associateBy { it.key }
         val catalogItems = definitions
             .map { definition ->
-                val preference = preferences[definition.key]
+                val preference = currentPreferences[definition.key]
                 HomeCatalogSettingsItem(
                     key = definition.key,
                     defaultTitle = definition.defaultTitle,
@@ -417,7 +430,7 @@ object HomeCatalogSettingsRepository {
             }
 
         val collectionItems = collectionDefinitions.map { colDef ->
-            val preference = preferences[colDef.key]
+            val preference = currentPreferences[colDef.key]
             HomeCatalogSettingsItem(
                 key = colDef.key,
                 defaultTitle = colDef.title,
@@ -435,27 +448,32 @@ object HomeCatalogSettingsRepository {
         val items = (catalogItems + collectionItems)
             .sortedBy { it.order }
 
-        val nextState = HomeCatalogSettingsUiState(
+        _uiState.value = HomeCatalogSettingsUiState(
             heroEnabled = heroEnabled,
+            heroAutoScrollEnabled = heroAutoScrollEnabled,
+            heroMotionPreviewEnabled = heroMotionPreviewEnabled,
             showCatalogType = showCatalogType,
             hideUnreleasedContent = hideUnreleasedContent,
+            hideCatalogUnderline = hideCatalogUnderline,
             items = items,
         )
-        if (_uiState.value != nextState) _uiState.value = nextState
     }
 
     private fun persist() {
-        val payload = json.encodeToString(
-            StoredHomeCatalogSettingsPayload(
-                heroEnabled = heroEnabled,
-                showCatalogType = showCatalogType,
-                hideUnreleasedContent = hideUnreleasedContent,
-                items = preferences.values.sortedBy { it.order },
+        val currentPreferences = preferences
+        HomeCatalogSettingsStorage.savePayload(
+            json.encodeToString(
+                StoredHomeCatalogSettingsPayload(
+                    heroEnabled = heroEnabled,
+                    heroAutoScrollEnabled = heroAutoScrollEnabled,
+                    heroMotionPreviewEnabled = heroMotionPreviewEnabled,
+                    showCatalogType = showCatalogType,
+                    hideUnreleasedContent = hideUnreleasedContent,
+                    hideCatalogUnderline = hideCatalogUnderline,
+                    items = currentPreferences.values.sortedBy { it.order },
+                ),
             ),
         )
-        if (payload == lastPersistedPayload) return
-        HomeCatalogSettingsStorage.savePayload(payload)
-        lastPersistedPayload = payload
     }
 
     private fun updatePreference(
@@ -464,10 +482,11 @@ object HomeCatalogSettingsRepository {
         transform: (StoredHomeCatalogPreference) -> StoredHomeCatalogPreference,
     ) {
         ensureLoaded()
-        val current = preferences[key] ?: defaultPreferenceForMissingKey(key) ?: return
+        val currentPreferences = preferences
+        val current = currentPreferences[key] ?: defaultPreferenceForMissingKey(key) ?: return
         val updated = transform(current)
         if (updated == current) return
-        preferences = preferences + (key to updated)
+        preferences = currentPreferences + (key to updated)
         publish()
         persist()
         HomeRepository.applyCurrentSettings()
@@ -478,7 +497,8 @@ object HomeCatalogSettingsRepository {
 
     private fun selectedHeroSourceCount(excludingKey: String? = null): Int {
         val catalogKeys = definitions.mapTo(mutableSetOf()) { it.key }
-        return preferences.count { (itemKey, preference) ->
+        val currentPreferences = preferences
+        return currentPreferences.count { (itemKey, preference) ->
             itemKey != excludingKey && itemKey in catalogKeys && preference.heroSourceEnabled
         }
     }
@@ -515,9 +535,10 @@ object HomeCatalogSettingsRepository {
 
     fun exportToSyncPayload(): SyncHomeCatalogPayload {
         ensureLoaded()
+        val currentPreferences = preferences
         val catalogDefinitionsByKey = definitions.associateBy { it.key }
         val collectionDefinitionsByKey = collectionDefinitions.associateBy { it.key }
-        val items = preferences.values.sortedBy { it.order }.map { pref ->
+        val items = currentPreferences.values.sortedBy { it.order }.map { pref ->
             val catalogDefinition = catalogDefinitionsByKey[pref.key]
             val collectionDefinition = collectionDefinitionsByKey[pref.key]
             val isCollection = collectionDefinition != null || pref.key.startsWith("collection_")
@@ -548,18 +569,23 @@ object HomeCatalogSettingsRepository {
             }
         }
         return SyncHomeCatalogPayload(
+            heroAutoScrollEnabled = heroAutoScrollEnabled,
             showCatalogType = showCatalogType,
             hideUnreleasedContent = hideUnreleasedContent,
+            hideCatalogUnderline = hideCatalogUnderline,
             items = items,
         )
     }
 
     fun applyFromRemote(payload: SyncHomeCatalogPayload) {
         ensureLoaded()
+        heroAutoScrollEnabled = payload.heroAutoScrollEnabled
         showCatalogType = payload.showCatalogType
         hideUnreleasedContent = payload.hideUnreleasedContent
+        hideCatalogUnderline = payload.hideCatalogUnderline
         if (payload.items.isNotEmpty()) {
-            val existingHeroState = preferences.mapValues { it.value.heroSourceEnabled }
+            val currentPreferences = preferences
+            val existingHeroState = currentPreferences.mapValues { it.value.heroSourceEnabled }
             val remotePreferences = payload.items.associate { item ->
                 val key = item.preferenceKey()
                 key to StoredHomeCatalogPreference(
@@ -572,7 +598,7 @@ object HomeCatalogSettingsRepository {
             }
             val remoteKeys = remotePreferences.keys
             val knownKeys = knownPreferenceKeys()
-            val preservedPreferences = preferences.filterKeys { key ->
+            val preservedPreferences = currentPreferences.filterKeys { key ->
                 key !in remoteKeys && (key in knownKeys || key.requiresExplicitSyncKey())
             }
             preferences = preservedPreferences + remotePreferences
@@ -585,10 +611,11 @@ object HomeCatalogSettingsRepository {
     }
 
     private fun allOrderedKeys(): List<String> {
+        val currentPreferences = preferences
         val catalogKeys = definitions.map { it.key }
         val collectionKeys = collectionDefinitions.map { it.key }
         return (catalogKeys + collectionKeys)
-            .sortedBy { key -> preferences[key]?.order ?: Int.MAX_VALUE }
+            .sortedBy { key -> currentPreferences[key]?.order ?: Int.MAX_VALUE }
     }
 
     private fun enforcePinnedCollectionsAtTop() {
@@ -618,6 +645,7 @@ object HomeCatalogSettingsRepository {
     }
 
     private fun defaultPreferenceForMissingKey(key: String): StoredHomeCatalogPreference? {
+        val currentPreferences = preferences
         val isCollection = collectionDefinitions.any { it.key == key }
         val isCatalog = definitions.any { it.key == key }
         if (!isCollection && !isCatalog) return null
@@ -628,7 +656,7 @@ object HomeCatalogSettingsRepository {
             heroSourceEnabled = isCatalog &&
                 selectedHeroSourceCount(excludingKey = key) < HERO_SOURCE_SELECTION_LIMIT,
             order = _uiState.value.items.firstOrNull { it.key == key }?.order
-                ?: ((preferences.values.maxOfOrNull { it.order } ?: -1) + 1),
+                ?: ((currentPreferences.values.maxOfOrNull { it.order } ?: -1) + 1),
         )
     }
 

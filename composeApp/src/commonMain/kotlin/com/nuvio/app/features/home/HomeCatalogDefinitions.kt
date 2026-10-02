@@ -29,15 +29,14 @@ data class HomeCatalogDefinition(
         if (showCatalogType) defaultTitle else catalogName
 }
 
-fun buildAddonCatalogRefreshSignature(addons: List<ManagedAddon>): List<String> =
-    addons.enabledAddons().map { addon ->
-        val signature = CatalogDescriptorSignature()
-        signature.addAddon(addon)
-        addon.manifest?.let { manifest ->
-            signature.addManifest(manifest)
-            manifest.catalogs.forEach(signature::addCatalog)
+fun buildHomeCatalogRefreshSignature(addons: List<ManagedAddon>): List<String> =
+    addons.enabledAddons().mapNotNull { addon ->
+        val manifest = addon.manifest ?: return@mapNotNull null
+        addon to manifest
+    }.flatMap { (addon, manifest) ->
+        manifest.catalogs.map { catalog ->
+            buildHomeCatalogDescriptorSignature(addon, manifest, catalog)
         }
-        signature.value()
     }.sorted()
 
 fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDefinition> =
@@ -68,15 +67,49 @@ fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDef
             }
     }.distinctBy(HomeCatalogDefinition::key)
 
-private fun buildHomeCatalogDescriptorSignature(
+internal fun buildHomeCatalogDescriptorSignature(
     addon: ManagedAddon,
     manifest: AddonManifest,
     catalog: AddonCatalog,
 ): String {
     val signature = CatalogDescriptorSignature()
-    signature.addAddon(addon)
-    signature.addManifest(manifest)
-    signature.addCatalog(catalog)
+    signature.add(addon.displayTitle)
+    signature.add(addon.enabled)
+    signature.add(addon.manifestUrl)
+    signature.add(manifest.id)
+    signature.add(manifest.name)
+    signature.add(manifest.version)
+    signature.add(manifest.description)
+    signature.add(manifest.logoUrl)
+    signature.add(manifest.transportUrl)
+    signature.add(manifest.types.size)
+    manifest.types.forEach(signature::add)
+    signature.add(manifest.idPrefixes.size)
+    manifest.idPrefixes.forEach(signature::add)
+    signature.add(manifest.resources.size)
+    manifest.resources.forEach { resource ->
+        signature.add(resource.name)
+        signature.add(resource.types.size)
+        resource.types.forEach(signature::add)
+        signature.add(resource.idPrefixes.size)
+        resource.idPrefixes.forEach(signature::add)
+    }
+    signature.add(manifest.behaviorHints.configurable)
+    signature.add(manifest.behaviorHints.configurationRequired)
+    signature.add(manifest.behaviorHints.adult)
+    signature.add(manifest.behaviorHints.p2p)
+    signature.add(catalog.type)
+    signature.add(catalog.id)
+    signature.add(catalog.name)
+    signature.add(catalog.supportsPagination())
+    signature.add(catalog.extra.size)
+    catalog.extra.forEach { extra ->
+        signature.add(extra.name)
+        signature.add(extra.isRequired)
+        signature.add(extra.options.size)
+        extra.options.forEach(signature::add)
+        signature.add(extra.optionsLimit)
+    }
     return signature.value()
 }
 
@@ -95,47 +128,6 @@ private class CatalogDescriptorSignature {
 
     fun add(value: Int?) {
         mix(value ?: Int.MIN_VALUE)
-    }
-
-    fun addAddon(addon: ManagedAddon) {
-        add(addon.userSetName)
-        add(addon.enabled)
-        add(addon.isRefreshing)
-        add(addon.errorMessage)
-        add(addon.manifestUrl)
-    }
-
-    fun addManifest(manifest: AddonManifest) {
-        add(manifest.id)
-        add(manifest.name)
-        add(manifest.version)
-        add(manifest.description)
-        add(manifest.logoUrl)
-        add(manifest.transportUrl)
-        manifest.types.forEach(::add)
-        manifest.idPrefixes.forEach(::add)
-        manifest.resources.forEach { resource ->
-            add(resource.name)
-            resource.types.forEach(::add)
-            resource.idPrefixes.forEach(::add)
-        }
-        add(manifest.behaviorHints.configurable)
-        add(manifest.behaviorHints.configurationRequired)
-        add(manifest.behaviorHints.adult)
-        add(manifest.behaviorHints.p2p)
-    }
-
-    fun addCatalog(catalog: AddonCatalog) {
-        add(catalog.type)
-        add(catalog.id)
-        add(catalog.name)
-        add(catalog.supportsPagination())
-        catalog.extra.forEach { extra ->
-            add(extra.name)
-            add(extra.isRequired)
-            extra.options.forEach(::add)
-            add(extra.optionsLimit)
-        }
     }
 
     fun value(): String = hash.toULong().toString(16)

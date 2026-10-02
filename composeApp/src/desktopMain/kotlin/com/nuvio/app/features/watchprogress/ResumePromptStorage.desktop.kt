@@ -1,21 +1,36 @@
 package com.nuvio.app.features.watchprogress
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
+import com.nuvio.app.core.storage.ProfileScopedKey
 
-internal actual object ResumePromptStorage {
-    private val store = DesktopStorage.store("nuvio_resume_prompt")
+actual object ResumePromptStorage {
+    private const val preferencesName = "nuvio_resume_prompt"
+    private const val wasInPlayerKey = "was_in_player"
+    private const val lastPlayerVideoIdKey = "last_player_video_id"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun loadWasInPlayer(): Boolean =
-        store.getBoolean("was_in_player") ?: false
+        preferences?.getBoolean(ProfileScopedKey.of(wasInPlayerKey), false) ?: false
 
     actual fun saveWasInPlayer(value: Boolean) {
-        store.putBoolean("was_in_player", value)
+        preferences?.edit()?.putBoolean(ProfileScopedKey.of(wasInPlayerKey), value)?.apply()
     }
 
     actual fun loadLastPlayerVideoId(): String? =
-        store.getString("last_player_video_id")
+        preferences?.getString(ProfileScopedKey.of(lastPlayerVideoIdKey), null)
 
     actual fun saveLastPlayerVideoId(videoId: String?) {
-        store.putString("last_player_video_id", videoId?.takeIf { it.isNotBlank() })
+        preferences?.edit()?.apply {
+            if (videoId != null) {
+                putString(ProfileScopedKey.of(lastPlayerVideoIdKey), videoId)
+            } else {
+                remove(ProfileScopedKey.of(lastPlayerVideoIdKey))
+            }
+            apply()
+        }
     }
 }

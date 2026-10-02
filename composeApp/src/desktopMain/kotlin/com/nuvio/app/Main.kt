@@ -40,7 +40,7 @@ import com.nuvio.app.features.player.desktop.trackMaximizedBoundsForCurrentScree
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.settings.AppIconRepository
 import com.nuvio.app.features.settings.applyDesktopRendererPreference
-import com.nuvio.app.features.settings.transparentPreviewResource
+import com.nuvio.app.features.settings.previewResource
 import java.awt.Desktop
 import javax.imageio.ImageIO
 import java.awt.Color as AwtColor
@@ -63,6 +63,8 @@ fun main(args: Array<String>) {
     configureLinuxSwingGlobalsBeforeAwt()
     installDesktopOpenUriHandler()
     handleDesktopLaunchArgs(args)
+    com.nuvio.app.core.diagnostics.CrashDiagnostics.initialize(null)
+    com.nuvio.app.features.cloudstream.CloudStreamPlatformStorage.initialize(null)
     preloadNativePlayerBridgeAsync()
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
@@ -128,9 +130,9 @@ fun main(args: Array<String>) {
                 SentryInitializer.close()
                 exitApplication()
             },
-            title = if (smokePlayerUrl == null) "Nuvio" else "Nuvio Player Smoke",
+            title = if (smokePlayerUrl == null) "Nuvio Speedy" else "Nuvio Speedy Player Smoke",
             state = windowState,
-            icon = painterResource(appIconState.selected.transparentPreviewResource),
+            icon = painterResource(appIconState.selected.previewResource),
             init = ::configureMacosWindowBeforePeer,
         ) {
             SideEffect {
@@ -281,5 +283,6 @@ private fun handleDesktopLaunchArgs(args: Array<String>) {
 }
 
 private fun isDesktopAppUrl(value: String): Boolean =
+    value.startsWith("nuviospeedy://", ignoreCase = true) ||
     value.startsWith("nuvio://", ignoreCase = true) ||
         value.startsWith("stremio://", ignoreCase = true)

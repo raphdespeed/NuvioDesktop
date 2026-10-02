@@ -15,6 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -22,7 +26,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
+import coil3.compose.AsyncImage
+import com.nuvio.app.core.ui.nuvioKeyboardFocusIndicator
 import com.nuvio.app.features.details.MetaCompany
 import com.nuvio.app.features.details.MetaDetails
 import nuvio.composeapp.generated.resources.*
@@ -109,10 +114,12 @@ private fun ProductionChip(
     logoHeight: androidx.compose.ui.unit.Dp,
     onClick: (() -> Unit)? = null,
 ) {
+    var logoLoadError by remember(item.logo) { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
             .background(color = ProductionChipBackground)
+            .nuvioKeyboardFocusIndicator(RoundedCornerShape(12.dp), onClick != null)
             .then(
                 if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
             )
@@ -120,7 +127,7 @@ private fun ProductionChip(
             .height(chipHeight),
         contentAlignment = Alignment.Center,
     ) {
-        if (!item.logo.isNullOrBlank()) {
+        if (!item.logo.isNullOrBlank() && !logoLoadError) {
             AsyncImage(
                 model = item.logo,
                 contentDescription = item.name,
@@ -128,6 +135,7 @@ private fun ProductionChip(
                     .width(logoWidth)
                     .height(logoHeight),
                 contentScale = ContentScale.Fit,
+                onError = { logoLoadError = true },
             )
         } else {
             Text(
