@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player.skip
 
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.watching.domain.isShortPlaceholderDuration
 import kotlin.random.Random
 
 object PlayerNextEpisodeRules {

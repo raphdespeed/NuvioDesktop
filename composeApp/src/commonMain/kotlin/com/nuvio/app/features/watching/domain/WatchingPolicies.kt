@@ -10,6 +10,9 @@ private const val CompletionThresholdFraction = 0.90
 private const val ProgressStoreThresholdMs = 1_000L
 private const val UpcomingNextSeasonWindowDays = 7
 
+/** Ignore short debrid error clips when saving progress or advancing episodes. */
+fun isShortPlaceholderDuration(durationMs: Long): Boolean = durationMs in 1 until 121_000L
+
 fun watchedKey(
     content: WatchingContentRef,
     seasonNumber: Int? = null,

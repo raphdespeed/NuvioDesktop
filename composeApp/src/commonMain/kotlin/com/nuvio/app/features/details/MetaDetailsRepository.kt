@@ -271,7 +271,7 @@ object MetaDetailsRepository {
         if (currentMeta != null) return currentMeta
 
         val cachedEntry = cachedEntry(requestKey) ?: return null
-        return cachedEntry.metaScreenMeta
+        val cachedMeta = cachedEntry.metaScreenMeta
             ?.takeIf { cachedEntry.metaScreenSettingsFingerprint == metaScreenSettingsFingerprint }
             ?: cachedEntry.baseMeta
         return cachedMeta.withUnreleasedFilter()
