@@ -203,6 +203,21 @@ fun NuvioPosterCard(
             }
 
             if (!bottomLeftLogoUrl.isNullOrBlank() || !bottomLeftText.isNullOrBlank()) {
+                // Gradient scrim for readability — matching NuvioTV Modern Home style
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .drawWithCache {
+                            val gradient = Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0.0f to Color.Transparent,
+                                    0.58f to Color.Transparent,
+                                    1.0f to Color.Black.copy(alpha = 0.75f)
+                                )
+                            )
+                            onDrawBehind { drawRect(gradient) }
+                        }
+                )
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -216,6 +231,7 @@ fun NuvioPosterCard(
                                 .width(catalogLogoOverlaySize.width)
                                 .height(catalogLogoOverlaySize.height),
                             contentScale = ContentScale.Fit,
+                            alignment = Alignment.CenterStart,
                         )
                     } else {
                         Text(

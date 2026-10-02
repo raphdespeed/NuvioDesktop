@@ -27,8 +27,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -122,7 +120,9 @@ internal fun LazyListScope.metaScreenSettingsContent(
             isTablet = isTablet,
         ) {
             SettingsGroup(isTablet = isTablet) {
-                MetaBackgroundModeSelector(
+                SettingsChipRow(
+                    title = stringResource(Res.string.settings_meta_background_mode),
+                    description = stringResource(Res.string.settings_meta_background_mode_description),
                     isTablet = isTablet,
                     selectedMode = uiState.backgroundMode,
                     onModeSelected = MetaScreenSettingsRepository::setBackgroundMode,
@@ -165,71 +165,6 @@ internal fun LazyListScope.metaScreenSettingsContent(
                 )
             }
         }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun MetaBackgroundModeSelector(
-    isTablet: Boolean,
-    selectedMode: MetaScreenBackgroundMode,
-    onModeSelected: (MetaScreenBackgroundMode) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                horizontal = if (isTablet) 20.dp else 16.dp,
-                vertical = if (isTablet) 18.dp else 14.dp,
-            ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = stringResource(Res.string.settings_meta_background_mode),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = stringResource(Res.string.settings_meta_background_mode_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            MetaScreenBackgroundMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = selectedMode == mode,
-                    onClick = { onModeSelected(mode) },
-                    label = {
-                        Text(
-                            text = stringResource(mode.labelRes),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = selectedMode == mode,
-                        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                    ),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-                )
-            }
-        }
-        Text(
-            text = stringResource(selectedMode.descriptionRes),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -399,9 +334,9 @@ private fun MetaSectionRow(
             FlowRow(
                 modifier = Modifier.padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TabGroupChip(
+                Chip(
                     label = stringResource(Res.string.settings_meta_none),
                     selected = item.tabGroup == null,
                     onClick = { onTabGroupChange(null) },
@@ -410,7 +345,7 @@ private fun MetaSectionRow(
                     val currentCount = groupCounts[groupId] ?: 0
                     val isSelected = item.tabGroup == groupId
                     val isFull = currentCount >= 3 && !isSelected
-                    TabGroupChip(
+                    Chip(
                         label = stringResource(Res.string.settings_meta_group_label, groupId),
                         selected = isSelected,
                         enabled = !isFull,

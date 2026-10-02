@@ -274,6 +274,7 @@ object MetaDetailsRepository {
         return cachedEntry.metaScreenMeta
             ?.takeIf { cachedEntry.metaScreenSettingsFingerprint == metaScreenSettingsFingerprint }
             ?: cachedEntry.baseMeta
+        return cachedMeta.withUnreleasedFilter()
     }
 
     fun clear() {

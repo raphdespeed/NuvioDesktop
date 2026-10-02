@@ -78,6 +78,7 @@ object PlayerNextEpisodeRules {
         thresholdPercent: Float,
         thresholdMinutesBeforeEnd: Float,
     ): Boolean {
+        if (isShortPlaceholderDuration(durationMs)) return false
         val outroSegments = skipIntervals.filter { it.type in OUTRO_SEGMENT_TYPES }
 
         if (outroSegments.isNotEmpty()) {
