@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player
 
 import com.nuvio.app.features.tmdb.TmdbService
+import com.nuvio.app.features.watching.domain.isShortPlaceholderDuration
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.tracking.TrackingScrobbleAction
 import com.nuvio.app.features.tracking.TrackingScrobbleCoordinator
@@ -10,52 +11,28 @@ import com.nuvio.app.features.watchprogress.WatchProgressClock
 import com.nuvio.app.features.watchprogress.WatchProgressPlaybackSession
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
-import com.nuvio.app.features.watching.domain.isShortPlaceholderDuration
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.abs
-
-internal fun PlayerScreenRuntime.finishTimelineScrub(positionMs: Long) {
-    lastManualSkipSeekPositions = playbackSnapshot.positionMs to positionMs
-    isScrubbingTimeline = false
-    scrubbingPositionMs = positionMs.takeIf { playbackSnapshot.isLoading }
-}
-
-internal fun PlayerScreenRuntime.updatePlaybackSnapshot(
-    snapshot: PlayerPlaybackSnapshot,
-    playbackKey: PlaybackKey = activePlaybackKey,
-): Boolean {
-    if (playbackKey != activePlaybackKey) return false
-    playbackSnapshot = if (snapshot.durationMs <= 0L && playbackSnapshotKey == playbackKey) {
-        snapshot.copy(durationMs = playbackSnapshot.durationMs)
-    } else {
-        snapshot
-    }
-    playbackSnapshotKey = playbackKey
-    val targetPositionMs = scrubbingPositionMs ?: return true
-    if (!isScrubbingTimeline && (
-            !snapshot.isLoading || snapshot.isEnded ||
-                abs(snapshot.positionMs - targetPositionMs) <= 1_000L
-            )
-    ) {
-        scrubbingPositionMs = null
-    }
-    return true
-}
 
 internal val PlayerScreenRuntime.activePlaybackIdentity: String
     get() = activeTorrentInfoHash
         ?.let { hash -> "torrent:$hash:${activeTorrentFileIdx ?: -1}" }
         ?: activeSourceUrl
 
-internal val PlayerScreenRuntime.activePlaybackKey: PlaybackKey
-    get() = PlaybackKey(
-        sourceIdentity = activePlaybackIdentity,
-        videoId = activeVideoId,
-        seasonNumber = activeSeasonNumber,
-        episodeNumber = activeEpisodeNumber,
-    )
+internal val PlayerScreenRuntime.currentPlaybackSurfaceSourceUrl: String?
+    get() {
+        if (activeTorrentInfoHash != null) {
+            return p2pResolvedSourceUrl
+        }
+        if (playerQualityState.sourceUrl == activeSourceUrl) {
+            return activePlaybackSourceUrl
+        }
+        return if (activeSourceAudioUrl == null && activeSourceUrl.contains(".m3u8", ignoreCase = true)) {
+            null
+        } else {
+            activeSourceUrl
+        }
+    }
 
 internal val PlayerScreenRuntime.playbackSession: WatchProgressPlaybackSession
     get() = WatchProgressPlaybackSession(
@@ -81,43 +58,12 @@ internal val PlayerScreenRuntime.playbackSession: WatchProgressPlaybackSession
         providerAddonId = activeProviderAddonId,
         lastStreamTitle = activeStreamTitle,
         lastStreamSubtitle = activeStreamSubtitle,
-        pauseDescription = activePauseDescription,
+        pauseDescription = pauseDescription,
         lastSourceUrl = activeSourceUrl,
     )
 
-internal fun PlayerScreenRuntime.currentLaunch(launch: PlayerLaunch): PlayerLaunch {
-    val positionMs = playbackSnapshot.positionMs.takeIf {
-        it > 0L && initialSeekApplied && playbackSnapshotKey == activePlaybackKey
-    }
-    return launch.copy(
-        sourceUrl = activeSourceUrl,
-        sourceAudioUrl = activeSourceAudioUrl,
-        sourceHeaders = activeSourceHeaders,
-        sourceResponseHeaders = activeSourceResponseHeaders,
-        externalSubtitles = externalSubtitles,
-        streamType = activeStreamType,
-        seasonNumber = activeSeasonNumber,
-        episodeNumber = activeEpisodeNumber,
-        episodeTitle = activeEpisodeTitle,
-        episodeThumbnail = activeEpisodeThumbnail,
-        streamTitle = activeStreamTitle,
-        streamSubtitle = activeStreamSubtitle,
-        bingeGroup = currentStreamBingeGroup,
-        pauseDescription = activePauseDescription,
-        providerName = activeProviderName,
-        providerAddonId = activeProviderAddonId,
-        videoId = activeVideoId,
-        torrentInfoHash = activeTorrentInfoHash,
-        torrentFileIdx = activeTorrentFileIdx,
-        torrentFilename = activeTorrentFilename,
-        torrentTrackers = activeTorrentTrackers,
-        initialPositionMs = positionMs ?: activeInitialPositionMs,
-        initialProgressFraction = activeInitialProgressFraction.takeIf { positionMs == null },
-    )
-}
-
 internal fun PlayerScreenRuntime.resetIdentityStateIfNeeded() {
-    val identity = activePlaybackKey
+    val identity = activePlaybackIdentity
     if (lastResetPlaybackIdentity != identity) {
         lastResetPlaybackIdentity = identity
         shouldPlay = true
@@ -127,10 +73,16 @@ internal fun PlayerScreenRuntime.resetIdentityStateIfNeeded() {
         initialSeekApplied = activeInitialPositionMs <= 0L &&
             (activeInitialProgressFraction == null || activeInitialProgressFraction!! <= 0f)
         lastProgressPersistEpochMs = 0L
+        lastProgressRemoteSyncEpochMs = 0L
+        lastProgressRemoteSyncPositionMs = 0L
         previousIsPlaying = false
         pendingSeekScrobbleRestart = false
         autoFetchedAddonSubtitlesForKey = null
-        resetTrackSelectionState()
+        trackPreferenceRestoreApplied = false
+        preferredAudioSelectionApplied = false
+        preferredSubtitleSelectionApplied = false
+        manualSubtitleSelectionLocked = false
+        autoAddonFallbackPending = false
     }
 
     val videoIdentity = "$identity:$activeVideoId:$activeSeasonNumber:$activeEpisodeNumber"
@@ -141,22 +93,7 @@ internal fun PlayerScreenRuntime.resetIdentityStateIfNeeded() {
         pendingSeekScrobbleRestart = false
         hasSentCompletionScrobbleForCurrentItem = false
         currentTrackingMedia = null
-        resetTrackSelectionState()
     }
-}
-
-private fun PlayerScreenRuntime.resetTrackSelectionState() {
-    trackPreferenceRestoreApplied = false
-    preferredAudioSelectionApplied = false
-    appliedAudioPreferences = null
-    isUserExplicitAudioSelection = false
-    preferredSubtitleSelectionApplied = false
-    isUserExplicitSubtitleSelection = false
-    hasScannedTextTracksOnce = false
-    subtitleTracks = emptyList()
-    selectedSubtitleIndex = -1
-    selectedAddonSubtitleId = null
-    useCustomSubtitles = false
 }
 
 internal fun PlayerScreenRuntime.currentPlaybackProgressPercent(
@@ -255,10 +192,9 @@ private fun PlayerScreenRuntime.emitTrackingScrobbleTerminal(
     val percent = provided ?: currentPlaybackProgressPercent()
     val mediaSnapshot = currentTrackingMedia
     val inputsSnapshot = snapshotTrackingScrobbleItemInputs()
-    scope.launch(NonCancellable) {
-        val media = mediaSnapshot ?: inputsSnapshot.buildMedia()
-        if (!media.hasResolvableIdentity) return@launch
-        TrackingScrobbleCoordinator.scrobble(
+    val media = mediaSnapshot ?: inputsSnapshot.buildMedia()
+    if (media.hasResolvableIdentity) {
+        TrackingScrobbleCoordinator.enqueueScrobble(
             profileId = profileId,
             action = action,
             event = TrackingScrobbleEvent(media = media, progressPercent = percent.toDouble()),
@@ -318,8 +254,13 @@ internal fun PlayerScreenRuntime.emitTrackingSeekScrobbleStart() {
 
 internal fun PlayerScreenRuntime.tryShowParentalGuide() {
     if (!playerSettingsUiState.showParentalGuide) return
-    if (!parentalGuideHasShown && parentalWarnings.isNotEmpty() && !playbackStartedForParentalGuide) {
+    if (
+        !parentalGuideHasShown &&
+        parentalWarnings.isNotEmpty() &&
+        !playbackStartedForParentalGuide
+    ) {
         playbackStartedForParentalGuide = true
+        controlsVisible = true
         showParentalGuide = true
         parentalGuideHasShown = true
     }
@@ -328,12 +269,6 @@ internal fun PlayerScreenRuntime.tryShowParentalGuide() {
 internal suspend fun PlayerScreenRuntime.resolveParentalGuideImdbId(): String? {
     val candidates = listOf(parentMetaId, activeVideoId)
     candidates.firstNotNullOfOrNull(::extractParentalGuideImdbId)?.let { return it }
-    // Fallback: use imdb_id from addon meta response
-    val metaImdbId = (metaUiState.meta ?: playerMeta)
-        ?.takeIf { it.id == parentMetaId }
-        ?.imdbId
-        ?.takeIf { it.startsWith("tt") }
-    if (metaImdbId != null) return metaImdbId
     val tmdbId = candidates.firstNotNullOfOrNull(::extractParentalGuideTmdbId) ?: return null
     return TmdbService.tmdbToImdb(
         tmdbId = tmdbId,
@@ -344,15 +279,15 @@ internal suspend fun PlayerScreenRuntime.resolveParentalGuideImdbId(): String? {
 internal fun PlayerScreenRuntime.flushWatchProgress(
     scrobbleAction: TrackingScrobbleAction = TrackingScrobbleAction.STOP,
 ) {
+    WatchProgressRepository.flushPlaybackProgress(
+        session = playbackSession,
+        snapshot = playbackSnapshot,
+    )
     when (scrobbleAction) {
         TrackingScrobbleAction.PAUSE -> emitTrackingScrobblePause()
         TrackingScrobbleAction.STOP -> emitStopScrobbleForCurrentProgress()
         TrackingScrobbleAction.START -> Unit
     }
-    WatchProgressRepository.flushPlaybackProgress(
-        session = playbackSession,
-        snapshot = playbackSnapshot,
-    )
 }
 
 internal fun PlayerScreenRuntime.scheduleProgressSyncAfterSeek() {
@@ -416,5 +351,29 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
         session = playbackSession,
         snapshot = playbackSnapshot,
         syncRemote = false,
+    )
+}
+
+internal fun PlayerScreenRuntime.syncPlaybackProgressTick() {
+    if (isLiveTv) return
+    if (playbackSnapshot.isLoading || !playbackSnapshot.isPlaying) return
+    val positionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    if (positionMs <= 0L || playbackSnapshot.durationMs <= 0L) return
+
+    val now = WatchProgressClock.nowEpochMs()
+    val elapsedSinceRemoteSync = now - lastProgressRemoteSyncEpochMs
+    val advancedSinceRemoteSync = positionMs - lastProgressRemoteSyncPositionMs
+    if (elapsedSinceRemoteSync < PlaybackProgressRemoteSyncIntervalMs &&
+        advancedSinceRemoteSync < PlaybackProgressRemoteSyncMinAdvanceMs
+    ) {
+        return
+    }
+
+    lastProgressRemoteSyncEpochMs = now
+    lastProgressRemoteSyncPositionMs = positionMs
+    WatchProgressRepository.upsertPlaybackProgress(
+        session = playbackSession,
+        snapshot = playbackSnapshot,
+        syncRemote = true,
     )
 }

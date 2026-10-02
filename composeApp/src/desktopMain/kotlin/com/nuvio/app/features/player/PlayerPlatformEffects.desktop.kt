@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 actual fun LockPlayerToLandscape() = Unit
 
 @Composable
-actual fun FullscreenPlayerDialog(
+fun FullscreenPlayerDialog(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -26,7 +26,7 @@ actual fun FullscreenPlayerDialog(
 }
 
 @Composable
-actual fun HidePlayerSystemBars() = Unit
+fun HidePlayerSystemBars() = Unit
 
 @Composable
 actual fun EnterImmersivePlayerMode(keepScreenAwake: Boolean) {
@@ -65,12 +65,12 @@ actual fun rememberIsInPictureInPicture(): Boolean {
     return version >= 0 && DesktopPlayerPictureInPicture.isEnabled
 }
 
-actual fun togglePlayerPictureInPicture() {
+fun togglePlayerPictureInPicture() {
     DesktopPlayerPictureInPicture.toggle()
 }
 
 @Composable
-internal actual fun rememberPlatformPlayerGestureController(): PlayerGestureController? = null
+actual fun rememberPlayerGestureController(): PlayerGestureController? = null
 
 private class DesktopKeepAwakeController : AutoCloseable {
     private var caffeinateProcess: Process? = null

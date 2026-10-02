@@ -7,7 +7,6 @@ import androidx.compose.ui.layout.ContentScale
 @Composable
 internal expect fun CollectionCardRemoteImage(
     imageUrl: String,
-    staticImageUrl: String? = null,
     contentDescription: String,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,

@@ -49,7 +49,7 @@ internal fun DesktopNavigationBar(
     val isHovered by interactionSource.collectIsHoveredAsState()
     val isHomeSelected = items.first().selected
     val isSettingsSelected = items.last().selected
-    val scrollOffset = scrollState?.totalScrollOffset ?: 0f
+    val scrollOffset = if (scrollState?.labelVisibility == 0f) 100f else 0f
     val isScrolledAwayFromTop = scrollOffset > if (isSettingsSelected) 70f else 35f
     val isFrosted = isHovered || profileSwitcherOpen ||
         ((isHomeSelected || isSettingsSelected) && isScrolledAwayFromTop)

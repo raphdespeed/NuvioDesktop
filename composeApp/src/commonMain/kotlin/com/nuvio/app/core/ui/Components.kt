@@ -10,6 +10,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +21,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,8 +33,10 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +60,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -71,7 +74,6 @@ import org.jetbrains.compose.resources.stringResource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import com.nuvio.app.isDesktop
 import com.nuvio.app.navigation.LocalNativeNavigationBarHidden
 import com.nuvio.app.navigation.LocalUseNativeNavigation
 
@@ -80,36 +82,26 @@ fun NuvioScreen(
     modifier: Modifier = Modifier,
     horizontalPadding: Dp = MaterialTheme.nuvio.spacing.screenHorizontal,
     topPadding: Dp? = null,
+    backgroundColor: Color = MaterialTheme.nuvio.colors.background,
     listState: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    Box(
+    LazyColumn(
+        state = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(tokens.colors.background),
-    ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = horizontalPadding,
-                top = topPadding ?: tokens.spacing.screenTop + statusBarTop + nuvioPlatformExtraTopPadding,
-                end = horizontalPadding,
-                bottom = nuvioSafeBottomPadding(tokens.spacing.screenBottom),
-            ),
-            verticalArrangement = Arrangement.spacedBy(tokens.spacing.listGap),
-            content = content,
-        )
-        NuvioDesktopVerticalScrollbar(
-            state = listState,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .padding(vertical = 8.dp, horizontal = 4.dp),
-        )
-    }
+            .background(backgroundColor),
+        contentPadding = PaddingValues(
+            start = horizontalPadding,
+            top = topPadding ?: tokens.spacing.screenTop + statusBarTop + nuvioPlatformExtraTopPadding,
+            end = horizontalPadding,
+            bottom = nuvioSafeBottomPadding(tokens.spacing.screenBottom),
+        ),
+        verticalArrangement = Arrangement.spacedBy(tokens.spacing.listGap),
+        content = content,
+    )
 }
 
 internal fun Modifier.nuvioConsumePointerEvents(): Modifier =
@@ -148,7 +140,7 @@ fun NuvioSurfaceCard(
 fun NuvioScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
-    backgroundColor: Color = MaterialTheme.nuvio.colors.background,
+    titleStyle: TextStyle = MaterialTheme.typography.displayLarge,
     includeStatusBarPadding: Boolean = true,
     topPadding: Dp? = null,
     onBack: (() -> Unit)? = null,
@@ -177,7 +169,7 @@ fun NuvioScreenHeader(
         Row(
             modifier = Modifier
                 .matchParentSize()
-                .background(backgroundColor)
+                .background(tokens.colors.background)
                 .nuvioConsumePointerEvents(),
         ) {}
         Row(
@@ -188,11 +180,15 @@ fun NuvioScreenHeader(
             verticalAlignment = Alignment.Bottom,
         ) {
             Row(
+                modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
             ) {
                 if (onBack != null) {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.nuvioKeyboardFocusIndicator(tokens.shapes.avatar),
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = stringResource(Res.string.action_back),
@@ -202,27 +198,24 @@ fun NuvioScreenHeader(
                 }
                 AnimatedContent(
                     targetState = title,
+                    modifier = Modifier.weight(1f, fill = false),
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
                     label = "screen_header_title",
                 ) { currentTitle ->
                     Text(
                         text = currentTitle,
-                        style = MaterialTheme.typography.displayLarge,
+                        style = titleStyle,
                         color = tokens.colors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s2),
                 verticalAlignment = Alignment.CenterVertically,
-            ) {
-                FullscreenActionButton(
-                    buttonSize = 48.dp,
-                    iconSize = 24.dp,
-                    contentColor = tokens.colors.textPrimary,
-                )
-                actions()
-            }
+                content = actions,
+            )
         }
     }
 }
@@ -251,7 +244,9 @@ fun NuvioActionLabel(
         text = text,
         modifier = modifier.then(
             if (onClick != null) {
-                Modifier.clickable(onClick = onClick)
+                Modifier
+                    .nuvioKeyboardFocusIndicator(MaterialTheme.nuvio.shapes.chip)
+                    .clickable(onClick = onClick)
             } else {
                 Modifier
             }
@@ -272,6 +267,7 @@ fun NuvioIconActionButton(
     val tokens = MaterialTheme.nuvio
     IconButton(
         modifier = modifier
+            .nuvioKeyboardFocusIndicator(tokens.shapes.avatar)
             .background(
                 color = tokens.colors.background.copy(alpha = 0.001f),
                 shape = tokens.shapes.avatar,
@@ -292,20 +288,19 @@ fun NuvioBackButton(
     modifier: Modifier = Modifier,
     shape: Shape = MaterialTheme.nuvio.shapes.avatar,
     containerColor: Color = MaterialTheme.nuvio.colors.surface,
-    showContainerOnDesktop: Boolean = false,
     contentColor: Color = MaterialTheme.nuvio.colors.textPrimary,
     buttonSize: Dp = NuvioTokens.Space.s40,
     iconSize: Dp = NuvioTokens.Icon.md,
     contentDescription: String = stringResource(Res.string.action_back),
 ) {
     if (LocalUseNativeNavigation.current && !LocalNativeNavigationBarHidden.current) return
-    val effectiveContainerColor = if (isDesktop && !showContainerOnDesktop) Color.Transparent else containerColor
 
     Box(
         modifier = modifier
             .size(buttonSize)
             .clip(shape)
-            .background(effectiveContainerColor)
+            .background(containerColor)
+            .nuvioKeyboardFocusIndicator(shape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -324,17 +319,24 @@ fun NuvioPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onClick: () -> Unit = {},
+    interactionSource: MutableInteractionSource? = null,
 ) {
     val tokens = MaterialTheme.nuvio
+    val shape = tokens.shapes.button
+    val animatedBrush = rememberAnimatedAccentBrush().takeIf { enabled }
     Button(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .height(NuvioTokens.Space.s48 + NuvioTokens.Space.s4),
+            .height(NuvioTokens.Space.s48 + NuvioTokens.Space.s4)
+            .clip(shape)
+            .nuvioKeyboardFocusIndicator(shape, enabled)
+            .then(if (animatedBrush != null) Modifier.background(animatedBrush, shape) else Modifier),
         enabled = enabled,
-        shape = tokens.shapes.button,
+        interactionSource = interactionSource ?: remember { MutableInteractionSource() },
+        shape = shape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = tokens.colors.accent,
+            containerColor = if (animatedBrush != null) Color.Transparent else tokens.colors.accent,
             contentColor = tokens.colors.onAccent,
             disabledContainerColor = tokens.colors.accent.copy(alpha = tokens.opacity.disabled),
             disabledContentColor = tokens.colors.onAccent.copy(alpha = tokens.opacity.disabled),
@@ -437,40 +439,80 @@ fun NuvioInlineMetadata(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun NuvioStatusModal(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
     isVisible: Boolean,
     isBusy: Boolean = false,
-    destructive: Boolean = false,
     confirmText: String = stringResource(Res.string.action_ok),
     dismissText: String? = null,
     onConfirm: () -> Unit,
     onDismiss: (() -> Unit)? = null,
 ) {
     if (!isVisible) return
+    val tokens = MaterialTheme.nuvio
 
-    DialogSurface(
+    BasicAlertDialog(
         onDismissRequest = {
             if (!isBusy) {
                 onDismiss?.invoke() ?: onConfirm()
             }
         },
-        modifier = modifier,
-        title = title,
-        message = message,
     ) {
-        DialogButtons {
-            if (!isBusy && dismissText != null && onDismiss != null) {
-                DialogButton(text = dismissText, onClick = onDismiss)
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            color = tokens.colors.surfaceDialog,
+            shape = tokens.shapes.dialog,
+        ) {
+            Column(
+                modifier = Modifier.padding(tokens.spacing.dialogPadding),
+            ) {
+                if (isBusy) {
+                    NuvioLoadingIndicator(
+                        color = tokens.colors.accent,
+                    )
+                    Spacer(modifier = Modifier.height(NuvioTokens.Space.s16))
+                }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = tokens.colors.textPrimary,
+                )
+                Spacer(modifier = Modifier.height(tokens.spacing.controlGap))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = tokens.colors.textMuted,
+                )
+                Spacer(modifier = Modifier.height(NuvioTokens.Space.s18))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    if (!isBusy && dismissText != null && onDismiss != null) {
+                        Button(
+                            onClick = onDismiss,
+                            shape = tokens.shapes.button,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = tokens.colors.surfaceCard,
+                                contentColor = tokens.colors.textPrimary,
+                            ),
+                        ) {
+                            Text(dismissText)
+                        }
+                        Spacer(modifier = Modifier.width(NuvioTokens.Space.s10))
+                    }
+                    Button(
+                        onClick = onConfirm,
+                        enabled = !isBusy,
+                        shape = tokens.shapes.button,
+                    ) {
+                        Text(confirmText)
+                    }
+                }
             }
-            DialogButton(
-                text = confirmText,
-                onClick = onConfirm,
-                style = if (destructive) DialogButtonStyle.Destructive else DialogButtonStyle.Primary,
-                loading = isBusy,
-            )
         }
     }
 }
@@ -481,7 +523,6 @@ fun NuvioToastHost(
 ) {
     val tokens = MaterialTheme.nuvio
     val toast by NuvioToastController.currentToast.collectAsState()
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val visibilityState = remember { MutableTransitionState(false) }
     var renderedToast by remember { mutableStateOf<NuvioToastMessage?>(null) }
 
@@ -510,16 +551,16 @@ fun NuvioToastHost(
     AnimatedVisibility(
         visibleState = visibilityState,
         modifier = modifier,
-        enter = fadeIn() + slideInVertically { -it },
-        exit = fadeOut() + slideOutVertically { -it },
+        enter = fadeIn() + slideInVertically { it },
+        exit = fadeOut() + slideOutVertically { it },
     ) {
         val currentToast = renderedToast ?: return@AnimatedVisibility
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = statusBarTop + tokens.spacing.listGap)
+                .padding(bottom = nuvioSafeBottomPadding(tokens.spacing.listGap))
                 .padding(horizontal = tokens.spacing.screenHorizontal),
-            contentAlignment = Alignment.TopCenter,
+            contentAlignment = Alignment.BottomCenter,
         ) {
             Surface(
                 shape = RoundedCornerShape(NuvioTokens.Radius.xl),

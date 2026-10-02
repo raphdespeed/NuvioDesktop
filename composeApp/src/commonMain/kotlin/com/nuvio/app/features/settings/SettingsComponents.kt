@@ -1,8 +1,11 @@
 package com.nuvio.app.features.settings
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,10 +20,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Lock
@@ -36,10 +42,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -50,11 +59,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.LocalTvLayoutProfile
 import com.nuvio.app.core.ui.NuvioActionLabel
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.NuvioSectionLabel
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioConsumePointerEvents
+import com.nuvio.app.core.ui.nuvioKeyboardFocusIndicator
+import com.nuvio.app.core.ui.rememberAnimatedAccentBrush
 import com.nuvio.app.features.home.HomeCatalogSettingsItem
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.settings_homescreen_collection_with_addon
@@ -66,6 +78,7 @@ import nuvio.composeapp.generated.resources.settings_homescreen_pinned
 import nuvio.composeapp.generated.resources.settings_homescreen_pinned_to_top
 import nuvio.composeapp.generated.resources.settings_homescreen_reorder
 import nuvio.composeapp.generated.resources.settings_homescreen_visible
+import nuvio.composeapp.generated.resources.settings_new_feature_badge
 import org.jetbrains.compose.resources.stringResource
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 
@@ -150,6 +163,8 @@ internal fun TabletPageHeader(
                 style = MaterialTheme.typography.headlineLarge,
                 color = tokens.colors.textPrimary,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -163,22 +178,29 @@ internal fun SettingsSidebarItem(
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val tvLayout = LocalTvLayoutProfile.current
     val primary = tokens.colors.accent
     val background = if (selected) primary.copy(alpha = tokens.opacity.hover) else Color.Transparent
     val iconChip = if (selected) primary.copy(alpha = tokens.opacity.selected) else Color.Transparent
     val contentColor = if (selected) tokens.colors.textPrimary else tokens.colors.textMuted
+    val itemShape = RoundedCornerShape(NuvioTokens.Space.s10)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = tokens.spacing.listGap, vertical = NuvioTokens.Space.s2)
-            .background(background, RoundedCornerShape(NuvioTokens.Space.s10))
+            .heightIn(min = if (tvLayout.enabled) 64.dp else 0.dp)
+            .padding(horizontal = if (tvLayout.enabled) 14.dp else tokens.spacing.listGap, vertical = NuvioTokens.Space.s2)
+            .background(background, itemShape)
+            .nuvioKeyboardFocusIndicator(itemShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = tokens.spacing.screenHorizontal, vertical = tokens.spacing.listGap),
+            .padding(
+                horizontal = if (tvLayout.enabled) 24.dp else tokens.spacing.screenHorizontal,
+                vertical = if (tvLayout.enabled) 14.dp else tokens.spacing.listGap,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Surface(
-            modifier = Modifier.size(tokens.icons.xl),
+            modifier = Modifier.size(if (tvLayout.enabled) 36.dp else tokens.icons.xl),
             color = iconChip,
             shape = RoundedCornerShape(NuvioTokens.Radius.md),
         ) {
@@ -233,22 +255,34 @@ internal fun SettingsSection(
 @Composable
 internal fun SettingsNavigationRow(
     title: String,
-    description: String?,
+    description: String,
     icon: ImageVector? = null,
     iconPainter: Painter? = null,
     enabled: Boolean = true,
     isTablet: Boolean,
-    trailingContent: (@Composable RowScope.() -> Unit)? = null,
+    highlighted: Boolean = false,
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     val iconSize = if (isTablet) 42.dp else 36.dp
     val verticalPadding = if (isTablet) 16.dp else 14.dp
     val horizontalPadding = if (isTablet) 20.dp else 16.dp
+    val highlightShape = RoundedCornerShape(if (isTablet) NuvioTokens.Radius.lg else NuvioTokens.Radius.md)
+    val highlightBrush = rememberAnimatedAccentBrush() ?: SolidColor(tokens.colors.accent)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (highlighted) {
+                    Modifier
+                        .background(tokens.colors.accent.copy(alpha = 0.08f), highlightShape)
+                        .border(tokens.borders.hairline, highlightBrush, highlightShape)
+                } else {
+                    Modifier
+                },
+            )
+            .nuvioKeyboardFocusIndicator(highlightShape, enabled)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = horizontalPadding, vertical = verticalPadding)
             .alpha(if (enabled) NuvioTokens.Opacity.visible else tokens.opacity.medium),
@@ -292,24 +326,19 @@ internal fun SettingsNavigationRow(
                 Spacer(modifier = Modifier.width(if (isTablet) 16.dp else 14.dp))
             }
             Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = tokens.colors.textPrimary,
-                    fontWeight = FontWeight.Medium,
+                SettingsRowTitle(
+                    title = title,
+                    highlighted = highlighted,
                 )
-                if (!description.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.colors.textMuted,
-                        modifier = Modifier.alpha(0.92f),
-                    )
-                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textMuted,
+                    modifier = Modifier.alpha(0.92f),
+                )
             }
         }
-        trailingContent?.invoke(this)
     }
 }
 
@@ -320,54 +349,146 @@ internal fun SettingsSwitchRow(
     checked: Boolean,
     enabled: Boolean = true,
     isTablet: Boolean,
+    highlighted: Boolean = false,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     val verticalPadding = if (isTablet) 16.dp else 14.dp
     val horizontalPadding = if (isTablet) 20.dp else 16.dp
-
+    val highlightShape = RoundedCornerShape(if (isTablet) NuvioTokens.Radius.lg else NuvioTokens.Radius.md)
+    val highlightBrush = rememberAnimatedAccentBrush() ?: SolidColor(tokens.colors.accent)
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (highlighted) {
+                    Modifier
+                        .background(tokens.colors.accent.copy(alpha = 0.08f), highlightShape)
+                        .border(tokens.borders.hairline, highlightBrush, highlightShape)
+                } else {
+                    Modifier
+                },
+            )
+            .nuvioKeyboardFocusIndicator(highlightShape, enabled)
             .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .weight(1f)
                 .padding(end = 12.dp)
                 .widthIn(max = if (isTablet) 560.dp else Dp.Unspecified)
                 .alpha(if (enabled) NuvioTokens.Opacity.visible else tokens.opacity.medium),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.Medium,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                SettingsRowTitle(
+                    title = title,
+                    highlighted = highlighted,
+                )
+                if (!description.isNullOrBlank()) {
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+            }
+        }
+        SettingsGradientSwitch(
+            checked = checked,
+            enabled = enabled,
+            highlighted = highlighted,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun SettingsGradientSwitch(
+    checked: Boolean,
+    enabled: Boolean,
+    highlighted: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    val trackShape = RoundedCornerShape(999.dp)
+    val trackBrush = rememberAnimatedAccentBrush().takeIf { checked && enabled }
+    val thumbOffset by animateDpAsState(
+        targetValue = if (checked) 20.dp else 0.dp,
+        animationSpec = tween(durationMillis = 180),
+        label = "settings_switch_thumb",
+    )
+    Box(
+        modifier = modifier
+            .size(width = 52.dp, height = 32.dp)
+            .clip(trackShape)
+            .then(
+                if (trackBrush != null) {
+                    Modifier.background(trackBrush)
+                } else {
+                    Modifier.background(
+                        when {
+                            checked -> tokens.colors.accent
+                            highlighted -> tokens.colors.accent.copy(alpha = 0.28f)
+                            else -> tokens.colors.borderDefault
+                        },
+                    )
+                },
             )
-            if (!description.isNullOrBlank()) {
+            .padding(4.dp)
+            .alpha(if (enabled) 1f else tokens.opacity.medium),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset)
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(if (checked) tokens.colors.onAccent else tokens.colors.textMuted),
+        )
+    }
+}
+
+@Composable
+private fun SettingsRowTitle(
+    title: String,
+    highlighted: Boolean,
+) {
+    val tokens = MaterialTheme.nuvio
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f, fill = false),
+            style = MaterialTheme.typography.bodyLarge,
+            color = tokens.colors.textPrimary,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (highlighted) {
+            Surface(
+                color = tokens.colors.accent.copy(alpha = 0.18f),
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, tokens.colors.accent.copy(alpha = 0.32f)),
+            ) {
                 Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = tokens.colors.textMuted,
+                    text = stringResource(Res.string.settings_new_feature_badge),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.accent,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
                 )
             }
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
-            modifier = Modifier.padding(start = 4.dp),
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = tokens.colors.onAccent,
-                checkedTrackColor = tokens.colors.accent,
-                uncheckedThumbColor = tokens.colors.textMuted,
-                uncheckedTrackColor = tokens.colors.borderDefault,
-            ),
-        )
     }
 }
 
@@ -432,11 +553,13 @@ internal fun HomescreenCatalogRow(
     val tokens = MaterialTheme.nuvio
     val horizontalPadding = if (isTablet) 20.dp else 16.dp
     val verticalPadding = if (isTablet) 18.dp else 16.dp
+    val rowShape = RoundedCornerShape(NuvioTokens.Radius.lg)
     val hapticFeedback = LocalHapticFeedback.current
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .nuvioKeyboardFocusIndicator(rowShape)
             .clickable { onExpandedChange(!expanded) }
             .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -570,4 +693,3 @@ internal fun HomescreenCatalogRow(
         }
     }
 }
-

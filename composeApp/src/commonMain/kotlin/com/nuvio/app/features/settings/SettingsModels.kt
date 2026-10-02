@@ -2,6 +2,7 @@ package com.nuvio.app.features.settings
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
@@ -10,15 +11,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_settings_category_about
 import nuvio.composeapp.generated.resources.compose_settings_category_general
+import nuvio.composeapp.generated.resources.settings_nuvio_speedy_category
 import nuvio.composeapp.generated.resources.compose_settings_page_account
+import nuvio.composeapp.generated.resources.compose_settings_page_ai_assistant
 import nuvio.composeapp.generated.resources.compose_settings_page_addons
+import nuvio.composeapp.generated.resources.compose_settings_page_cloudstream
 import nuvio.composeapp.generated.resources.compose_settings_page_advanced
 import nuvio.composeapp.generated.resources.compose_settings_page_appearance
 import nuvio.composeapp.generated.resources.compose_settings_page_content_discovery
 import nuvio.composeapp.generated.resources.compose_settings_page_debrid
 import nuvio.composeapp.generated.resources.compose_settings_page_continue_watching
 import nuvio.composeapp.generated.resources.compose_settings_page_homescreen
-import nuvio.composeapp.generated.resources.compose_settings_page_hover_preview
 import nuvio.composeapp.generated.resources.compose_settings_page_integrations
 import nuvio.composeapp.generated.resources.compose_settings_page_licenses_attributions
 import nuvio.composeapp.generated.resources.compose_settings_page_mdblist_ratings
@@ -27,13 +30,15 @@ import nuvio.composeapp.generated.resources.compose_settings_page_notifications
 import nuvio.composeapp.generated.resources.compose_settings_page_playback
 import nuvio.composeapp.generated.resources.compose_settings_page_plugins
 import nuvio.composeapp.generated.resources.compose_settings_page_poster_customization
+import nuvio.composeapp.generated.resources.compose_settings_page_profile
 import nuvio.composeapp.generated.resources.compose_settings_page_root
 import nuvio.composeapp.generated.resources.compose_settings_page_streams
 import nuvio.composeapp.generated.resources.compose_settings_page_supporters_contributors
 import nuvio.composeapp.generated.resources.compose_settings_page_tmdb_enrichment
-import nuvio.composeapp.generated.resources.compose_settings_page_trakt
 import nuvio.composeapp.generated.resources.compose_settings_page_tracking
+import nuvio.composeapp.generated.resources.profile_insights_favorite_people_title
 import nuvio.composeapp.generated.resources.settings_account
+import nuvio.composeapp.generated.resources.settings_nuvio_speedy_title
 import org.jetbrains.compose.resources.StringResource
 
 internal enum class SettingsCategory(
@@ -42,6 +47,7 @@ internal enum class SettingsCategory(
 ) {
     Account(Res.string.settings_account, Icons.Rounded.AccountCircle),
     General(Res.string.compose_settings_category_general, Icons.Rounded.Settings),
+    Speedy(Res.string.settings_nuvio_speedy_category, Icons.Rounded.AutoAwesome),
     About(Res.string.compose_settings_category_about, Icons.Rounded.Info),
     Advanced(Res.string.compose_settings_page_advanced, Icons.Rounded.Tune),
 }
@@ -60,6 +66,16 @@ internal enum class SettingsPage(
         titleRes = Res.string.compose_settings_page_account,
         category = SettingsCategory.Account,
         parentPage = Root,
+    ),
+    Profile(
+        titleRes = Res.string.compose_settings_page_profile,
+        category = SettingsCategory.Account,
+        parentPage = Root,
+    ),
+    FavoriteActors(
+        titleRes = Res.string.profile_insights_favorite_people_title,
+        category = SettingsCategory.Account,
+        parentPage = Profile,
     ),
     SupportersContributors(
         titleRes = Res.string.compose_settings_page_supporters_contributors,
@@ -81,11 +97,6 @@ internal enum class SettingsPage(
         category = SettingsCategory.General,
         parentPage = Root,
     ),
-    HoverPreview(
-        titleRes = Res.string.compose_settings_page_hover_preview,
-        category = SettingsCategory.General,
-        parentPage = Appearance,
-    ),
     Streams(
         titleRes = Res.string.compose_settings_page_streams,
         category = SettingsCategory.General,
@@ -99,6 +110,11 @@ internal enum class SettingsPage(
     Notifications(
         titleRes = Res.string.compose_settings_page_notifications,
         category = SettingsCategory.General,
+        parentPage = Root,
+    ),
+    NuvioSpeedy(
+        titleRes = Res.string.settings_nuvio_speedy_title,
+        category = SettingsCategory.Speedy,
         parentPage = Root,
     ),
     ContinueWatching(
@@ -126,6 +142,11 @@ internal enum class SettingsPage(
         category = SettingsCategory.General,
         parentPage = ContentDiscovery,
     ),
+    CloudStream(
+        titleRes = Res.string.compose_settings_page_cloudstream,
+        category = SettingsCategory.General,
+        parentPage = ContentDiscovery,
+    ),
     Homescreen(
         titleRes = Res.string.compose_settings_page_homescreen,
         category = SettingsCategory.General,
@@ -140,6 +161,11 @@ internal enum class SettingsPage(
         titleRes = Res.string.compose_settings_page_integrations,
         category = SettingsCategory.General,
         parentPage = Root,
+    ),
+    AiAssistant(
+        titleRes = Res.string.compose_settings_page_ai_assistant,
+        category = SettingsCategory.General,
+        parentPage = Integrations,
     ),
     TmdbEnrichment(
         titleRes = Res.string.compose_settings_page_tmdb_enrichment,

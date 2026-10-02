@@ -1,8 +1,9 @@
 package com.nuvio.app.features.plugins
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.diagnostics.DiagnosticEvent
+import com.nuvio.app.core.diagnostics.RuntimeDiagnostics
 import com.nuvio.app.core.network.SupabaseProvider
-import com.nuvio.app.features.addons.encodeUnsafeHttpUrlCharacters
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tmdb.TmdbService
@@ -14,6 +15,8 @@ import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -77,12 +80,16 @@ actual object PluginRepository {
     actual val uiState: StateFlow<PluginsUiState> = _uiState.asStateFlow()
 
     private var initialized = false
+    private var pulledFromServer = false
     private var currentProfileId = 1
     private val activeRefreshJobs = mutableMapOf<String, Job>()
     private val persistenceGeneration = atomic(0L)
     private val persistenceRevision = atomic(0L)
     private val persistenceLock = SynchronizedObject()
     private val persistedRevisionByProfile = mutableMapOf<Int, Long>()
+    private var pendingPersistenceSnapshot: PluginPersistenceSnapshot? = null
+    private var persistenceWorkerRunning = false
+    private val refreshLock = SynchronizedObject()
 
     actual fun initialize() {
         val effectiveProfileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
@@ -90,11 +97,7 @@ actual object PluginRepository {
         ensureStateLoadedForProfile(effectiveProfileId)
         if (!shouldRefreshStoredRepos) return
 
-        val state = _uiState.value
-        val nowEpochMs = currentEpochMillis()
-        state.repositories.filter { repo ->
-            shouldRefreshRepository(repo, state.scrapers, nowEpochMs)
-        }.forEach { repo ->
+        _uiState.value.repositories.forEach { repo ->
             refreshRepositoryInternal(repo.manifestUrl, pushAfterRefresh = false, ensureInitialized = false)
         }
     }
@@ -104,8 +107,10 @@ actual object PluginRepository {
         if (effectiveProfileId == currentProfileId && initialized) return
 
         cancelActiveRefreshes()
+        persistenceGeneration.incrementAndGet()
         currentProfileId = effectiveProfileId
         initialized = false
+        pulledFromServer = false
         _uiState.value = PluginsUiState()
     }
 
@@ -114,63 +119,69 @@ actual object PluginRepository {
         persistenceGeneration.incrementAndGet()
         currentProfileId = 1
         initialized = false
+        pulledFromServer = false
         _uiState.value = PluginsUiState()
     }
 
     actual suspend fun pullFromServer(profileId: Int) {
         val effectiveProfileId = resolveEffectiveProfileId(profileId)
         ensureStateLoadedForProfile(effectiveProfileId)
+        val pullProfileId = currentProfileId
+        val pullGeneration = persistenceGeneration.value
         runCatching {
             val rows = SupabaseProvider.client.postgrest
                 .from("plugins")
                 .select {
-                    filter { eq("profile_id", currentProfileId) }
+                    filter { eq("profile_id", pullProfileId) }
                     order("sort_order", Order.ASCENDING)
                 }
                 .decodeList<PluginRow>()
+            if (
+                pullGeneration != persistenceGeneration.value ||
+                pullProfileId != currentProfileId
+            ) return
 
             val urls = dedupeManifestUrls(rows.map { it.url })
-            val existingState = _uiState.value
-            val existingReposByUrl = existingState.repositories.associateBy { it.manifestUrl }
-            val nowEpochMs = currentEpochMillis()
+            if (urls.isEmpty() && !pulledFromServer) {
+                val localUrls = _uiState.value.repositories.map { it.manifestUrl }
+                if (localUrls.isNotEmpty()) {
+                    initialize()
+                    pulledFromServer = true
+                    pushToServer()
+                    return
+                }
+            }
+
+            val existingReposByUrl = _uiState.value.repositories.associateBy { it.manifestUrl }
             val nextRepos = urls.map { url ->
-                val existing = existingReposByUrl[url]
-                if (existing == null) {
-                    PluginRepositoryItem(
+                existingReposByUrl[url]?.copy(isRefreshing = true, errorMessage = null)
+                    ?: PluginRepositoryItem(
                         manifestUrl = url,
                         name = url.substringBefore("?").substringAfterLast('/'),
                         isRefreshing = true,
                     )
-                } else {
-                    val shouldRefresh = shouldRefreshRepository(
-                        repository = existing,
-                        scrapers = existingState.scrapers,
-                        nowEpochMs = nowEpochMs,
-                    )
-                    existing.copy(
-                        isRefreshing = shouldRefresh,
-                        errorMessage = if (shouldRefresh) null else existing.errorMessage,
-                    )
-                }
             }
-            val nextScrapers = existingState.scrapers.filter { scraper ->
+            val nextScrapers = _uiState.value.scrapers.filter { scraper ->
                 urls.contains(scraper.repositoryUrl)
             }
 
             _uiState.value = PluginsUiState(
                 pluginsEnabled = _uiState.value.pluginsEnabled,
                 groupStreamsByRepository = _uiState.value.groupStreamsByRepository,
+                excludedQualities = _uiState.value.excludedQualities,
                 repositories = nextRepos,
                 scrapers = nextScrapers,
             )
             persist()
 
-            nextRepos.filter(PluginRepositoryItem::isRefreshing).forEach { repository ->
-                refreshRepository(repository.manifestUrl, pushAfterRefresh = false)
+            urls.forEach { url ->
+                refreshRepository(url, pushAfterRefresh = false)
             }
 
+            pulledFromServer = true
             initialized = true
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             log.e(error) { "pullFromServer failed" }
         }
     }
@@ -188,11 +199,20 @@ actual object PluginRepository {
         }
 
         return try {
+            val installProfileId = currentProfileId
+            val installGeneration = persistenceGeneration.value
             val previousById = _uiState.value.scrapers.associateBy { it.id }
             val (repo, scrapers) = fetchRepositoryData(
                 manifestUrl = manifestUrl,
                 previousScrapers = previousById,
+                storageProfileId = installProfileId,
             )
+            if (
+                installGeneration != persistenceGeneration.value ||
+                installProfileId != currentProfileId
+            ) {
+                return AddPluginRepositoryResult.Error(getString(Res.string.plugins_repository_install_failed))
+            }
             _uiState.update { state ->
                 state.copy(
                     repositories = state.repositories + repo,
@@ -203,6 +223,7 @@ actual object PluginRepository {
             pushToServer()
             AddPluginRepositoryResult.Success(repo)
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             AddPluginRepositoryResult.Error(error.message ?: getString(Res.string.plugins_repository_install_failed))
         }
     }
@@ -238,22 +259,29 @@ actual object PluginRepository {
         if (ensureInitialized) {
             initialize()
         }
-        val existingJob = activeRefreshJobs[manifestUrl]
-        if (existingJob?.isActive == true) return
-
-        markRefreshing(manifestUrl)
-        var refreshJob: Job? = null
-        refreshJob = scope.launch {
+        val refreshProfileId = currentProfileId
+        val refreshGeneration = persistenceGeneration.value
+        lateinit var refreshJob: Job
+        refreshJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val result = runCatching {
-                    val previous = _uiState.value.scrapers.associateBy { it.id }
-                    fetchRepositoryData(manifestUrl, previous)
+                val result = try {
+                    val previous = _uiState.value.scrapers
+                        .filter { it.repositoryUrl == manifestUrl }
+                        .associateBy { it.id }
+                    Result.success(fetchRepositoryData(manifestUrl, previous, refreshProfileId))
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    Result.failure(error)
                 }
+                if (
+                    refreshGeneration != persistenceGeneration.value ||
+                    refreshProfileId != currentProfileId
+                ) return@launch
 
                 _uiState.update { state ->
-                    if (state.repositories.none { it.manifestUrl == manifestUrl }) return@update state
                     result.fold(
                         onSuccess = { (repo, scrapers) ->
+                            RuntimeDiagnostics.record(DiagnosticEvent.PluginRefreshFinished)
                             val updatedRepos = state.repositories.map { existing ->
                                 if (existing.manifestUrl == manifestUrl) repo else existing
                             }
@@ -263,6 +291,7 @@ actual object PluginRepository {
                             )
                         },
                         onFailure = { error ->
+                            RuntimeDiagnostics.record(DiagnosticEvent.PluginRefreshFailed)
                             state.copy(
                                 repositories = state.repositories.map { existing ->
                                     if (existing.manifestUrl == manifestUrl) {
@@ -283,12 +312,28 @@ actual object PluginRepository {
                     pushToServer()
                 }
             } finally {
-                if (activeRefreshJobs[manifestUrl] === refreshJob) {
-                    activeRefreshJobs.remove(manifestUrl)
+                synchronized(refreshLock) {
+                    if (activeRefreshJobs[manifestUrl] === refreshJob) {
+                        activeRefreshJobs.remove(manifestUrl)
+                    }
                 }
             }
         }
-        activeRefreshJobs[manifestUrl] = refreshJob
+        val accepted = synchronized(refreshLock) {
+            if (activeRefreshJobs[manifestUrl]?.isActive == true) {
+                false
+            } else {
+                activeRefreshJobs[manifestUrl] = refreshJob
+                true
+            }
+        }
+        if (!accepted) {
+            refreshJob.cancel()
+            return
+        }
+        markRefreshing(manifestUrl)
+        RuntimeDiagnostics.record(DiagnosticEvent.PluginRefreshStarted)
+        refreshJob.start()
     }
 
     actual fun toggleScraper(scraperId: String, enabled: Boolean) {
@@ -307,6 +352,34 @@ actual object PluginRepository {
         persist()
     }
 
+    actual fun toggleRepositoryScrapers(repositoryUrl: String, enabled: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            state.copy(
+                scrapers = state.scrapers.map { scraper ->
+                    if (scraper.repositoryUrl == repositoryUrl) {
+                        scraper.copy(enabled = if (scraper.manifestEnabled) enabled else false)
+                    } else {
+                        scraper
+                    }
+                },
+            )
+        }
+        persist()
+    }
+
+    actual fun toggleAllScrapers(enabled: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            state.copy(
+                scrapers = state.scrapers.map { scraper ->
+                    scraper.copy(enabled = if (scraper.manifestEnabled) enabled else false)
+                },
+            )
+        }
+        persist()
+    }
+
     actual fun setPluginsEnabled(enabled: Boolean) {
         initialize()
         _uiState.update { it.copy(pluginsEnabled = enabled) }
@@ -319,8 +392,17 @@ actual object PluginRepository {
         persist()
     }
 
-    actual fun setLocalPluginSearchPaused(paused: Boolean) {
-        PluginRuntime.setSearchPaused(paused)
+    actual fun setQualityExcluded(qualityId: String, excluded: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            val nextExcluded = if (excluded) {
+                state.excludedQualities + qualityId
+            } else {
+                state.excludedQualities - qualityId
+            }
+            state.copy(excludedQualities = nextExcluded)
+        }
+        persist()
     }
 
     actual fun getEnabledScrapersForType(type: String): List<PluginScraper> {
@@ -339,13 +421,12 @@ actual object PluginRepository {
         val mediaType = if (scraper.supportsType("movie")) "movie" else "tv"
         val season = if (mediaType == "tv") 1 else null
         val episode = if (mediaType == "tv") 1 else null
-        return executeScraperInternal(
+        return executeScraper(
             scraper = scraper,
             tmdbId = "603",
             mediaType = mediaType,
             season = season,
             episode = episode,
-            respectSearchPause = false,
         )
     }
 
@@ -355,22 +436,6 @@ actual object PluginRepository {
         mediaType: String,
         season: Int?,
         episode: Int?,
-    ): Result<List<PluginRuntimeResult>> = executeScraperInternal(
-        scraper = scraper,
-        tmdbId = tmdbId,
-        mediaType = mediaType,
-        season = season,
-        episode = episode,
-        respectSearchPause = true,
-    )
-
-    private suspend fun executeScraperInternal(
-        scraper: PluginScraper,
-        tmdbId: String,
-        mediaType: String,
-        season: Int?,
-        episode: Int?,
-        respectSearchPause: Boolean,
     ): Result<List<PluginRuntimeResult>> {
         val resolvedTmdbId = resolvePluginTmdbId(
             tmdbId = tmdbId,
@@ -385,7 +450,6 @@ actual object PluginRepository {
                 season = season,
                 episode = episode,
                 scraperId = scraper.id,
-                respectSearchPause = respectSearchPause,
             )
         }
     }
@@ -406,8 +470,8 @@ actual object PluginRepository {
     private suspend fun fetchRepositoryData(
         manifestUrl: String,
         previousScrapers: Map<String, PluginScraper>,
+        storageProfileId: Int = currentProfileId,
     ): Pair<PluginRepositoryItem, List<PluginScraper>> {
-        val storageProfileId = currentProfileId
         return withContext(Dispatchers.Default) {
             val payload = httpGetText(manifestUrl)
             val manifest = PluginManifestParser.parse(payload)
@@ -421,7 +485,7 @@ actual object PluginRepository {
                     } else {
                         "$baseUrl/${info.filename.trimStart('/')}"
                     }
-                    runCatching {
+                    try {
                         val code = httpGetText(codeUrl)
                         val scraperId = "${manifestUrl.lowercase()}:${info.id}"
                         val cached = PluginStorage.saveScraperCode(
@@ -456,7 +520,10 @@ actual object PluginRepository {
                             formats = info.formats ?: info.supportedFormats,
                             code = code,
                         )
-                    }.getOrNull()
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        null
+                    }
                 }
 
             val repo = PluginRepositoryItem(
@@ -474,20 +541,13 @@ actual object PluginRepository {
     }
 
     private fun PluginManifestScraper.isSupportedOnCurrentPlatform(): Boolean {
-        val platformTags = currentPluginPlatformTags().map { it.lowercase() }.toSet()
+        val platform = currentPluginPlatform().lowercase()
         val supported = supportedPlatforms?.map { it.lowercase() }?.toSet().orEmpty()
         val disabled = disabledPlatforms?.map { it.lowercase() }?.toSet().orEmpty()
-        if (supported.isNotEmpty() && platformTags.none { it in supported }) return false
-        if (platformTags.any { it in disabled }) return false
+        if (supported.isNotEmpty() && platform !in supported) return false
+        if (platform in disabled) return false
         return true
     }
-
-    private fun shouldRefreshRepository(
-        repository: PluginRepositoryItem,
-        scrapers: List<PluginScraper>,
-        nowEpochMs: Long,
-    ): Boolean = isPluginRepositoryRefreshDue(repository.lastUpdated, nowEpochMs) ||
-        scrapers.count { scraper -> scraper.repositoryUrl == repository.manifestUrl } < repository.scraperCount
 
     private fun markRefreshing(manifestUrl: String) {
         _uiState.update { state ->
@@ -504,9 +564,11 @@ actual object PluginRepository {
     }
 
     private fun pushToServer() {
+        val profileId = currentProfileId
+        val repositories = _uiState.value.repositories
         scope.launch {
             runCatching {
-                val repos = _uiState.value.repositories.mapIndexed { index, repo ->
+                val repos = repositories.mapIndexed { index, repo ->
                     PluginPushItem(
                         url = repo.manifestUrl,
                         name = repo.name,
@@ -516,7 +578,7 @@ actual object PluginRepository {
                 }
 
                 val params = buildJsonObject {
-                    put("p_profile_id", currentProfileId)
+                    put("p_profile_id", profileId)
                     put("p_plugins", json.encodeToJsonElement(repos))
                 }
                 SupabaseProvider.client.postgrest.rpc("sync_push_plugins", params)
@@ -533,30 +595,63 @@ actual object PluginRepository {
             revision = persistenceRevision.incrementAndGet(),
             state = _uiState.value,
         )
-        val requiresCodeWrite = snapshot.state.scrapers.any { scraper ->
-            !PluginStorage.hasScraperCode(snapshot.profileId, scraper.id)
+        RuntimeDiagnostics.updatePlugins(
+            repositories = snapshot.state.repositories.size,
+            scrapers = snapshot.state.scrapers.size,
+            enabledScrapers = snapshot.state.scrapers.count { it.enabled },
+            totalCodeChars = snapshot.state.scrapers.sumOf { it.code.length.toLong() },
+            largestCodeChars = snapshot.state.scrapers.maxOfOrNull { it.code.length } ?: 0,
+        )
+        val shouldStartWorker = synchronized(persistenceLock) {
+            pendingPersistenceSnapshot = snapshot
+            if (persistenceWorkerRunning) {
+                false
+            } else {
+                persistenceWorkerRunning = true
+                true
+            }
         }
-        if (requiresCodeWrite) {
-            scope.launch { persist(snapshot) }
-        } else {
-            persist(snapshot)
+        if (shouldStartWorker) {
+            scope.launch { drainPersistenceQueue() }
         }
     }
 
-    private fun persist(snapshot: PluginPersistenceSnapshot) {
+    private fun drainPersistenceQueue() {
+        try {
+            while (true) {
+                val snapshot = synchronized(persistenceLock) {
+                    pendingPersistenceSnapshot.also { pendingPersistenceSnapshot = null }
+                        ?: run {
+                            persistenceWorkerRunning = false
+                            return
+                        }
+                }
+                persistSnapshot(snapshot)
+            }
+        } catch (error: Throwable) {
+            synchronized(persistenceLock) {
+                persistenceWorkerRunning = false
+            }
+            throw error
+        }
+    }
+
+    private fun persistSnapshot(snapshot: PluginPersistenceSnapshot) {
         if (snapshot.generation != persistenceGeneration.value) return
-        var cached = true
+        RuntimeDiagnostics.record(DiagnosticEvent.PluginPersistStarted)
+        var allCodeCached = true
         snapshot.state.scrapers.forEach { scraper ->
-            val scraperCached = PluginStorage.saveScraperCode(
+            val cached = PluginStorage.saveScraperCode(
                 profileId = snapshot.profileId,
                 scraperId = scraper.id,
                 code = scraper.code,
                 overwrite = false,
             )
-            cached = scraperCached && cached
+            allCodeCached = cached && allCodeCached
         }
-        if (!cached || snapshot.generation != persistenceGeneration.value) {
-            if (!cached) {
+        if (!allCodeCached || snapshot.generation != persistenceGeneration.value) {
+            if (!allCodeCached) {
+                RuntimeDiagnostics.record(DiagnosticEvent.PluginPersistFailed)
                 log.w { "Failed to persist plugin scraper cache for profile ${snapshot.profileId}" }
             }
             return
@@ -569,20 +664,28 @@ actual object PluginRepository {
             val payload = snapshot.state.toStoredPluginsState()
             PluginStorage.saveState(snapshot.profileId, json.encodeToString(payload))
             persistedRevisionByProfile[snapshot.profileId] = snapshot.revision
+            RuntimeDiagnostics.record(DiagnosticEvent.PluginPersistFinished)
         }
     }
 
     private fun loadStoredState(profileId: Int): StoredPluginsState? {
-        val raw = PluginStorage.loadState(profileId)?.trim().orEmpty()
+        val raw = PluginStorage.loadState(profileId) ?: return null
         if (raw.isBlank()) return null
-        return runCatching {
+        return try {
             json.decodeFromString<StoredPluginsState>(raw)
-        }.getOrNull()
+        } catch (error: OutOfMemoryError) {
+            throw error
+        } catch (error: Throwable) {
+            log.e(error) { "Failed to decode stored plugin metadata for profile $profileId" }
+            null
+        }
     }
 
     private fun cancelActiveRefreshes() {
-        activeRefreshJobs.values.forEach(Job::cancel)
-        activeRefreshJobs.clear()
+        val jobs = synchronized(refreshLock) {
+            activeRefreshJobs.values.toList().also { activeRefreshJobs.clear() }
+        }
+        jobs.forEach(Job::cancel)
     }
 
     private fun ensureStateLoadedForProfile(profileId: Int) {
@@ -590,6 +693,8 @@ actual object PluginRepository {
 
         if (currentProfileId != profileId) {
             cancelActiveRefreshes()
+            persistenceGeneration.incrementAndGet()
+            pulledFromServer = false
         }
 
         currentProfileId = profileId
@@ -615,6 +720,7 @@ actual object PluginRepository {
             state = PluginsUiState(
                 pluginsEnabled = stored?.pluginsEnabled ?: true,
                 groupStreamsByRepository = stored?.groupStreamsByRepository ?: false,
+                excludedQualities = stored?.excludedQualities.orEmpty(),
                 repositories = stored?.repositories
                     ?.map {
                         PluginRepositoryItem(
@@ -642,8 +748,7 @@ actual object PluginRepository {
         val path = url.substringBefore("?").trimEnd('/')
         val query = url.substringAfter("?", "")
         val withSuffix = if (path.endsWith("/manifest.json")) path else "$path/manifest.json"
-        val manifestUrl = if (query.isEmpty()) withSuffix else "$withSuffix?$query"
-        return manifestUrl.encodeUnsafeHttpUrlCharacters()
+        return if (query.isEmpty()) withSuffix else "$withSuffix?$query"
     }
 
     private fun normalizeManifestUrl(rawUrl: String): String {
@@ -659,12 +764,19 @@ actual object PluginRepository {
         val query = withoutFragment.substringAfter("?", "")
         val path = withoutFragment.substringBefore("?").trimEnd('/')
         val manifestPath = if (path.endsWith("/manifest.json")) path else "$path/manifest.json"
-        val manifestUrl = if (query.isEmpty()) manifestPath else "$manifestPath?$query"
-        return manifestUrl.encodeUnsafeHttpUrlCharacters()
+        return if (query.isEmpty()) manifestPath else "$manifestPath?$query"
     }
 
     private fun resolveEffectiveProfileId(profileId: Int): Int {
         val active = ProfileRepository.state.value.activeProfile
-        return if (active != null && !active.id.isBlank() && active.usesPrimaryPlugins) 1 else profileId
+        return if (
+            active != null &&
+            active.profileIndex != 1 &&
+            (active.usesPrimaryPlugins || active.usesPrimaryAddons)
+        ) {
+            1
+        } else {
+            profileId
+        }
     }
 }

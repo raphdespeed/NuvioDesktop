@@ -8,7 +8,7 @@ import java.nio.file.Paths
 import kotlin.system.exitProcess
 
 internal actual object AppIconPlatform {
-    actual val isSupported: Boolean = true
+    val isSupported: Boolean = true
     actual val requiresCloseConfirmation: Boolean = true
 
     private val store = DesktopStorage.store("nuvio_app_icon")

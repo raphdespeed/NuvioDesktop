@@ -5,7 +5,6 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,8 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,13 +32,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
+import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
 import com.nuvio.app.core.ui.nuvioCardDepth
-import com.nuvio.app.core.ui.nuvioDesktopDragScroll
+import com.nuvio.app.core.ui.nuvioKeyboardFocusIndicator
 import com.nuvio.app.features.details.MetaPerson
 import com.nuvio.app.features.details.castAvatarSharedTransitionKey
 import nuvio.composeapp.generated.resources.*
@@ -65,14 +64,11 @@ fun DetailCastSection(
     ) {
         BoxWithConstraints {
             val sizing = castSectionSizing(maxWidth.value)
-            val rowState = rememberLazyListState()
 
             LazyRow(
-                state = rowState,
                 modifier = Modifier
                     .nuvioHorizontalScrollBleed(horizontalScrollPadding)
-                    .fillMaxWidth()
-                    .nuvioDesktopDragScroll(rowState),
+                    .fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = horizontalScrollPadding),
                 horizontalArrangement = Arrangement.spacedBy(sizing.avatarGap),
             ) {
@@ -143,22 +139,12 @@ private fun CastItem(
     } else {
         Modifier
     }
-    val clickInteractionSource = remember { MutableInteractionSource() }
 
     Column(
         modifier = modifier
             .width(sizing.itemWidth)
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = clickInteractionSource,
-                        indication = null,
-                        onClick = onClick,
-                    )
-                } else {
-                    Modifier
-                },
-            ),
+            .nuvioKeyboardFocusIndicator(RoundedCornerShape(16.dp), onClick != null)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

@@ -3,9 +3,11 @@ package com.nuvio.app.core.storage
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.sync.SyncManager
 import com.nuvio.app.core.sync.ProfileSettingsSync
+import com.nuvio.app.core.sync.ProviderCredentialSync
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.catalog.CatalogRepository
+import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.collection.CollectionMobileSettingsRepository
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.details.MetaDetailsRepository
@@ -13,7 +15,6 @@ import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
 import com.nuvio.app.features.library.LibraryRepository
-import com.nuvio.app.features.membership.MemberAccessRepository
 import com.nuvio.app.features.library.LibraryDisplaySettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.player.PlayerLaunchStore
@@ -27,6 +28,7 @@ import com.nuvio.app.features.search.SearchRepository
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.streams.StreamContextStore
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
+import com.nuvio.app.features.streams.StreamSourcePreferencesRepository
 import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.tracking.TrackingProviderRegistry
@@ -46,23 +48,23 @@ internal object LocalAccountDataCleaner {
         SyncManager.cancelAccountSync()
         WatchProgressSourceCoordinator.clearLocalState()
         ProfileSettingsSync.clearAccountState()
+        ProviderCredentialSync.clearAccountState()
         ContinueWatchingEnrichmentCache.clearLocalState()
         WatchProgressRepository.clearLocalState()
         WatchedRepository.clearLocalState()
         LibraryRepository.runAccountStorageWipe {
-            wipePlatformStorage()
+            PlatformLocalAccountDataCleaner.wipe()
         }
 
         ProfileRepository.clearInMemory()
-        MemberAccessRepository.clearLocalState()
         AddonRepository.clearLocalState()
         if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.clearLocalState()
+            CloudStreamRepository.clearLocalState()
         }
         HomeRepository.clear()
         HomeCatalogSettingsRepository.clearLocalState()
         MetaScreenSettingsRepository.clearLocalState()
-        com.nuvio.app.features.shuffle.EpisodeShuffleRepository.clearLocalState()
         LibraryRepository.clearLocalState()
         LibraryDisplaySettingsRepository.clearLocalState()
         ContinueWatchingPreferencesRepository.clearLocalState()
@@ -76,6 +78,7 @@ internal object LocalAccountDataCleaner {
         TrackingSettingsRepository.clearLocalState()
         PlayerSettingsRepository.clearLocalState()
         StreamBadgeSettingsRepository.clearLocalState()
+        StreamSourcePreferencesRepository.clearLocalState()
         P2pSettingsRepository.clearLocalState()
         CatalogRepository.clear()
         StreamsRepository.clear()
@@ -85,14 +88,6 @@ internal object LocalAccountDataCleaner {
         PlayerLaunchStore.clear()
         StreamLaunchStore.clear()
         StreamContextStore.clear()
-    }
-
-    internal fun wipePlatformStorage(wipeStorage: () -> Unit = PlatformLocalAccountDataCleaner::wipe) {
-        try {
-            wipeStorage()
-        } finally {
-            ContinueWatchingEnrichmentCache.clearLocalState()
-        }
     }
 }
 

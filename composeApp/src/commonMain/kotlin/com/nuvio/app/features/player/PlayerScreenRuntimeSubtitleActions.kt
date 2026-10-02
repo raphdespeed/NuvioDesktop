@@ -6,10 +6,6 @@ import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import kotlinx.coroutines.launch
 
 internal fun PlayerScreenRuntime.fetchAddonSubtitlesForActiveItem() {
-    if (activeSourceUrl.startsWith("file:") && externalSubtitles.isNotEmpty()) {
-        SubtitleRepository.clear()
-        return
-    }
     val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return
     val videoId = activeVideoId?.takeIf { it.isNotBlank() } ?: return
     SubtitleRepository.fetchAddonSubtitles(type, videoId)
@@ -53,6 +49,8 @@ internal fun PlayerScreenRuntime.loadSubtitleAutoSyncCues(force: Boolean = false
 }
 
 internal fun PlayerScreenRuntime.captureSubtitleAutoSyncTime() {
+    playerController?.pause()
+    shouldPlay = false
     subtitleAutoSyncState = subtitleAutoSyncState.copy(
         capturedPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L),
         errorMessage = null,
@@ -61,9 +59,21 @@ internal fun PlayerScreenRuntime.captureSubtitleAutoSyncTime() {
 }
 
 internal fun PlayerScreenRuntime.applySubtitleAutoSyncCue(cue: SubtitleSyncCue) {
-    val capturedPositionMs = subtitleAutoSyncState.capturedPositionMs ?: return
-    val newDelayMs = (capturedPositionMs - cue.startTimeMs - SUBTITLE_AUTO_SYNC_REACTION_COMPENSATION_MS)
-        .toInt()
-        .coerceIn(SUBTITLE_DELAY_MIN_MS, SUBTITLE_DELAY_MAX_MS)
+    val anchorPositionMs = (
+        subtitleAutoSyncState.capturedPositionMs
+            ?: playbackSnapshot.positionMs
+        ).coerceAtLeast(0L)
+    val newDelayMs = subtitleDelayForCue(
+        anchorPositionMs = anchorPositionMs,
+        cueStartTimeMs = cue.startTimeMs,
+    )
     setSubtitleDelay(newDelayMs)
+    subtitleAutoSyncState = subtitleAutoSyncState.copy(capturedPositionMs = null, errorMessage = null)
+    playerController?.refreshSubtitlePosition(anchorPositionMs)
+}
+
+internal fun subtitleDelayForCue(anchorPositionMs: Long, cueStartTimeMs: Long): Int {
+    return (anchorPositionMs - cueStartTimeMs)
+        .coerceIn(SUBTITLE_DELAY_MIN_MS.toLong(), SUBTITLE_DELAY_MAX_MS.toLong())
+        .toInt()
 }

@@ -15,13 +15,12 @@ private val watchingProgressRecencyComparator =
         .thenBy(WatchingProgressRecord::identityKey)
         .thenBy(WatchingProgressRecord::videoId)
 
-internal fun String?.isSeriesLikeWatchingContentType(includeAnime: Boolean = false): Boolean {
+internal fun String?.isSeriesLikeWatchingContentType(): Boolean {
     val type = this?.trim() ?: return false
     return type.equals("series", ignoreCase = true) ||
         type.equals("tv", ignoreCase = true) ||
         type.equals("show", ignoreCase = true) ||
-        type.equals("tvshow", ignoreCase = true) ||
-        (includeAnime && type.equals("anime", ignoreCase = true))
+        type.equals("tvshow", ignoreCase = true)
 }
 
 private fun WatchingContentRef.matchesWatchingContent(content: WatchingContentRef): Boolean {
@@ -98,7 +97,20 @@ fun nextReleasedEpisodeAfter(
         }
     }
 
-    if (watchedIndex < 0) return null
+    if (watchedIndex < 0) {
+        val seedIsSpecial = normalizeSeasonNumber(seasonNumber) == 0
+        if (!seedIsSpecial) return null
+        return sortedEpisodes
+            .asSequence()
+            .filter { episode -> normalizeSeasonNumber(episode.seasonNumber) > 0 }
+            .firstOrNull { episode ->
+                isReleasedBy(
+                    todayIsoDate = todayIsoDate,
+                    releasedDate = episode.releasedDate,
+                    available = episode.available,
+                ) || showUnairedNextUp
+            }
+    }
 
     val watchedEpisodeSeason = sortedEpisodes[watchedIndex].seasonNumber
     val candidates = sortedEpisodes
@@ -125,7 +137,6 @@ fun decideSeriesPrimaryAction(
     preferFurthestEpisode: Boolean = true,
     showUnairedNextUp: Boolean = false,
     defaultVideoId: String? = null,
-    allowRewatch: Boolean = false,
 ): WatchingSeriesPrimaryAction? {
     val resumeRecord = resumeProgressForSeries(
         content = content,
@@ -152,12 +163,6 @@ fun decideSeriesPrimaryAction(
             showUnairedNextUp = showUnairedNextUp,
         )
     } else {
-        null
-    }
-
-    if (latestCompletedEpisode != null && nextEpisode == null && !allowRewatch) return null
-
-    val playbackEpisode = nextEpisode ?: run {
         val sorted = episodes
             .sortedWith(compareBy<WatchingReleasedEpisode>({ normalizeSeasonNumber(it.seasonNumber) }, { it.episodeNumber ?: 0 }))
         val released = sorted.filter { episode ->
@@ -167,15 +172,14 @@ fun decideSeriesPrimaryAction(
                 available = episode.available,
             )
         }
-        defaultVideoId?.takeIf { latestCompletedEpisode == null }
-            ?.let { videoId -> released.firstOrNull { it.videoId == videoId } }
+        defaultVideoId?.let { videoId -> released.firstOrNull { it.videoId == videoId } }
             ?: released.firstOrNull { normalizeSeasonNumber(it.seasonNumber) > 0 }
             ?: released.firstOrNull()
     }
 
-    return playbackEpisode?.let { episode ->
+    return nextEpisode?.let { episode ->
         WatchingSeriesPrimaryAction(
-            label = if (nextEpisode != null) {
+            label = if (latestCompletedEpisode != null) {
                 upNextLabel(episode.seasonNumber, episode.episodeNumber)
             } else {
                 playLabel(episode.seasonNumber, episode.episodeNumber)

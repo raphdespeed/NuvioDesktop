@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -40,13 +39,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.PlatformBackHandler
+import com.nuvio.app.core.ui.isTvLayoutProfileEnabled
 import com.nuvio.app.core.ui.nuvio
-import com.nuvio.app.core.ui.shimmer
-import com.nuvio.app.features.streams.ProviderFilterRow
-import com.nuvio.app.features.streams.StreamsUiState
-import nuvio.composeapp.generated.resources.Res
-import nuvio.composeapp.generated.resources.collections_tab_all
-import org.jetbrains.compose.resources.stringResource
 
 @Composable
 internal fun PlayerSidePanel(
@@ -57,6 +51,7 @@ internal fun PlayerSidePanel(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val useTvLayout = isTvLayoutProfileEnabled()
     val backgroundInteraction = remember { MutableInteractionSource() }
     val panelInteraction = remember { MutableInteractionSource() }
 
@@ -78,8 +73,8 @@ internal fun PlayerSidePanel(
                     onClick = onDismiss,
                 ),
         ) {
-            val resolvedWidth = minOf(maxWidth, width)
-            val shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+            val resolvedWidth = minOf(maxWidth, if (useTvLayout) 900.dp else width)
+            val shape = if (useTvLayout) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
 
             AnimatedVisibility(
                 visible = visible,
@@ -167,42 +162,21 @@ internal fun PlayerDialogButton(
 internal fun PlayerModalLoading(
     modifier: Modifier = Modifier,
 ) {
+    val tokens = MaterialTheme.nuvio
+
     Box(
         modifier = modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
     ) {
         NuvioLoadingIndicator(
+            color = tokens.colors.accent,
             modifier = Modifier.size(24.dp),
         )
     }
 }
 
 @Composable
-internal fun PlayerProviderFilterRow(
-    streamsUiState: StreamsUiState,
-    onFilterSelected: (String?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    ProviderFilterRow(
-        groups = streamsUiState.groups,
-        selectedFilter = streamsUiState.selectedFilter,
-        onFilterSelected = onFilterSelected,
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-        spacing = 16.dp,
-    ) { group, isSelected, onClick ->
-        AddonFilterChip(
-            label = group?.addonName ?: stringResource(Res.string.collections_tab_all),
-            isSelected = isSelected,
-            isLoading = group?.isLoading == true,
-            hasError = group?.error != null,
-            onClick = onClick,
-        )
-    }
-}
-
-@Composable
-private fun AddonFilterChip(
+internal fun AddonFilterChip(
     label: String,
     isSelected: Boolean,
     onClick: () -> Unit,
@@ -234,13 +208,23 @@ private fun AddonFilterChip(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
-        Text(
-            text = label,
-            modifier = Modifier.shimmer(isLoading),
-            color = contentColor,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (isLoading) {
+                NuvioLoadingIndicator(
+                    color = contentColor,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+            Text(
+                text = label,
+                color = contentColor,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+            )
+        }
     }
 }

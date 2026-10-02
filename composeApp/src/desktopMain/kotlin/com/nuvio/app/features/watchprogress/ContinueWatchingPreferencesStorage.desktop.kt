@@ -1,15 +1,24 @@
 package com.nuvio.app.features.watchprogress
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 import com.nuvio.app.core.storage.ProfileScopedKey
 
-internal actual object ContinueWatchingPreferencesStorage {
-    private val store = DesktopStorage.store("nuvio_continue_watching_preferences")
+actual object ContinueWatchingPreferencesStorage {
+    private const val preferencesName = "nuvio_continue_watching_preferences"
+    private const val payloadKey = "continue_watching_preferences_payload"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun loadPayload(): String? =
-        store.getString(ProfileScopedKey.of("continue_watching_preferences"))
+        preferences?.getString(ProfileScopedKey.of(payloadKey), null)
 
     actual fun savePayload(payload: String) {
-        store.putString(ProfileScopedKey.of("continue_watching_preferences"), payload)
+        preferences
+            ?.edit()
+            ?.putString(ProfileScopedKey.of(payloadKey), payload)
+            ?.apply()
     }
 }

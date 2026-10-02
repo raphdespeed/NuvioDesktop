@@ -15,10 +15,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -37,13 +38,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
-import com.nuvio.app.core.ui.Menu
-import com.nuvio.app.core.ui.MenuItem
+import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.nuvioCardDepth
-import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
+import com.nuvio.app.core.ui.nuvioKeyboardFocusIndicator
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.features.details.MetaTrailer
 import nuvio.composeapp.generated.resources.*
@@ -82,8 +81,7 @@ fun DetailTrailersSection(
     var menuExpanded by remember { mutableStateOf(false) }
 
     val selectedTrailers = grouped[selectedCategory].orEmpty()
-    val posterCardStyle = rememberPosterCardStyleUiState()
-    val userCornerRadius = posterCardStyle.cornerRadiusDp.dp
+    val userCornerRadius = rememberPosterCardStyleUiState().cornerRadiusDp.dp
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -111,6 +109,7 @@ fun DetailTrailersSection(
                         tonalElevation = 0.dp,
                         modifier = Modifier
                             .clip(RoundedCornerShape(sizing.selectorRadius))
+                            .nuvioKeyboardFocusIndicator(RoundedCornerShape(sizing.selectorRadius))
                             .clickable { menuExpanded = true },
                     ) {
                         Row(
@@ -139,15 +138,20 @@ fun DetailTrailersSection(
                         }
                     }
 
-                    Menu(
+                    DropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
                     ) {
                         grouped.keys.forEach { category ->
                             val count = grouped[category]?.size ?: 0
-                            MenuItem(
-                                text = stringResource(Res.string.detail_trailer_category_count, category, count),
-                                selected = category == selectedCategory,
+                            DropdownMenuItem(
+                                modifier = Modifier.nuvioKeyboardFocusIndicator(RoundedCornerShape(8.dp)),
+                                text = {
+                                    Text(
+                                        text = stringResource(Res.string.detail_trailer_category_count, category, count),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                },
                                 onClick = {
                                     selectedCategory = category
                                     menuExpanded = false
@@ -161,13 +165,10 @@ fun DetailTrailersSection(
 
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val sizing = trailerSectionSizing(maxWidth.value, userCornerRadius)
-            val rowState = rememberLazyListState()
             LazyRow(
-                state = rowState,
                 modifier = Modifier
                     .nuvioHorizontalScrollBleed(horizontalScrollPadding)
-                    .fillMaxWidth()
-                    .nuvioDesktopDragScroll(rowState),
+                    .fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = horizontalScrollPadding),
                 horizontalArrangement = Arrangement.spacedBy(sizing.cardSpacing),
             ) {
@@ -210,6 +211,7 @@ private fun TrailerCard(
                     shape = RoundedCornerShape(cornerRadius),
                     surface = NuvioCardDepthSurface.Trailers,
                 )
+                .nuvioKeyboardFocusIndicator(RoundedCornerShape(cornerRadius))
                 .clickable(onClick = onClick),
         ) {
             AsyncImage(
@@ -264,7 +266,7 @@ private data class TrailerSectionSizing(
     val metaFontSize: androidx.compose.ui.unit.TextUnit,
 )
 
-private fun trailerSectionSizing(maxWidthDp: Float, userCornerRadius: androidx.compose.ui.unit.Dp = 16.dp): TrailerSectionSizing =
+private fun trailerSectionSizing(maxWidthDp: Float, userCornerRadius: Dp): TrailerSectionSizing =
     when {
         maxWidthDp >= 1200f -> TrailerSectionSizing(
             cardWidth = 280.dp,

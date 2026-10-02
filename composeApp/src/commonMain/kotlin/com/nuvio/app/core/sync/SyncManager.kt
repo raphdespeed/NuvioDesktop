@@ -32,9 +32,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val FOREGROUND_PULL_DELAY_MS = 2500L
-private const val FOREGROUND_ACTIVITY_PULL_MIN_INTERVAL_MS = 2 * 60_000L
-private const val FULL_PULL_MIN_INTERVAL_MS = 10_000L
-private const val PERIODIC_NUVIO_SYNC_PULL_INTERVAL_MS = 15 * 60_000L
+private const val FOREGROUND_PULL_MIN_INTERVAL_MS = 30 * 60_000L
+private const val PERIODIC_NUVIO_SYNC_PULL_INTERVAL_MS = 240_000L
 
 internal enum class ProfileSyncStep {
     Addons,
@@ -56,11 +55,6 @@ internal data class ProfileSyncOperations(
     val refreshActiveWatchSource: suspend (Int) -> Unit,
     val pullCollections: suspend (Int) -> Unit,
     val pullHomeCatalogSettings: suspend (Int) -> Unit,
-)
-
-internal data class ProfileActivitySyncOperations(
-    val pullLibrary: suspend (Int) -> Unit,
-    val pullWatchActivity: suspend (Int) -> Unit,
 )
 
 internal data class ProfileSyncResult(
@@ -117,12 +111,13 @@ internal suspend fun runOrderedProfileSync(
         }
     }
 
-    runStep(ProfileSyncStep.ProfileSettings, operations.pullProfileSettings)
-    runStep(ProfileSyncStep.ProviderCredentials, operations.syncProviderCredentials)
     runStep(ProfileSyncStep.Addons, operations.pullAddons)
     if (pluginsEnabled) {
         runStep(ProfileSyncStep.Plugins, operations.pullPlugins)
     }
+
+    runStep(ProfileSyncStep.ProfileSettings, operations.pullProfileSettings)
+    runStep(ProfileSyncStep.ProviderCredentials, operations.syncProviderCredentials)
 
     coroutineScope {
         launch {
@@ -143,70 +138,20 @@ internal suspend fun runOrderedProfileSync(
     )
 }
 
-internal suspend fun runActivityProfileSync(
-    profileId: Int,
-    pullLibrary: Boolean = true,
-    pullWatchActivity: Boolean = true,
-    operations: ProfileActivitySyncOperations,
-    onFailure: (ProfileSyncStep, Throwable) -> Unit = { _, _ -> },
-): ProfileSyncResult {
-    val failureLock = SynchronizedObject()
-    val failedSteps = mutableSetOf<ProfileSyncStep>()
-
-    suspend fun runStep(
-        step: ProfileSyncStep,
-        operation: suspend (Int) -> Unit,
-    ) {
-        try {
-            operation(profileId)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Throwable) {
-            synchronized(failureLock) {
-                failedSteps += step
-            }
-            onFailure(step, error)
-        }
-    }
-
-    coroutineScope {
-        if (pullLibrary) {
-            launch {
-                runStep(ProfileSyncStep.Library, operations.pullLibrary)
-            }
-        }
-        if (pullWatchActivity) {
-            launch {
-                runStep(ProfileSyncStep.ActiveWatchSource, operations.pullWatchActivity)
-            }
-        }
-    }
-    return ProfileSyncResult(
-        failedSteps = synchronized(failureLock) { failedSteps.toSet() },
-    )
-}
-
 internal enum class ProfileSyncRequestResult {
     Started,
     Coalesced,
     Replaced,
 }
 
-internal enum class ProfileSyncRequestKind {
-    Activity,
-    Full,
-}
-
 internal class ProfileSyncRequestGate {
     private val lock = SynchronizedObject()
     private var activeProfileId: Int? = null
-    private var activeKind: ProfileSyncRequestKind? = null
     private var activeJob: Job? = null
 
     fun launch(
         scope: CoroutineScope,
         profileId: Int,
-        kind: ProfileSyncRequestKind = ProfileSyncRequestKind.Full,
         block: suspend () -> Unit,
     ): ProfileSyncRequestResult {
         lateinit var newJob: Job
@@ -214,10 +159,7 @@ internal class ProfileSyncRequestGate {
         val result = synchronized(lock) {
             val active = activeJob?.takeUnless(Job::isCompleted)
             if (active != null && activeProfileId == profileId) {
-                val activeRequestKind = activeKind
-                if (activeRequestKind == ProfileSyncRequestKind.Full || kind == ProfileSyncRequestKind.Activity) {
-                    return ProfileSyncRequestResult.Coalesced
-                }
+                return ProfileSyncRequestResult.Coalesced
             }
 
             previousJob = active
@@ -231,14 +173,12 @@ internal class ProfileSyncRequestGate {
                 block()
             }
             activeProfileId = profileId
-            activeKind = kind
             activeJob = newJob
             newJob.invokeOnCompletion {
                 synchronized(lock) {
                     if (activeJob === newJob) {
                         activeJob = null
                         activeProfileId = null
-                        activeKind = null
                     }
                 }
             }
@@ -255,16 +195,16 @@ internal class ProfileSyncRequestGate {
             activeJob.also {
                 activeJob = null
                 activeProfileId = null
-                activeKind = null
             }
         }
         job?.cancel()
     }
+
 }
 
 object SyncManager {
     private val log = Logger.withTag("SyncManager")
-    private val syncRequestGate = ProfileSyncRequestGate()
+    private val fullSyncRequestGate = ProfileSyncRequestGate()
     private val accountScopeLock = SynchronizedObject()
     private var accountScopeJob: Job = SupervisorJob()
     private var accountScope = CoroutineScope(accountScopeJob + Dispatchers.Default)
@@ -273,8 +213,7 @@ object SyncManager {
     private var foregroundPullProfileId: Int? = null
     private var periodicNuvioSyncPullJob: Job? = null
     private var periodicNuvioSyncProfileId: Int? = null
-    private var activityPullFreshness = ProfilePullFreshness()
-    private var fullPullFreshness = ProfilePullFreshness()
+    private var pullFreshness = ProfilePullFreshness()
 
     private val profileSyncOperations = ProfileSyncOperations(
         pullAddons = { profileId -> AddonRepository.pullFromServer(profileId) },
@@ -292,23 +231,13 @@ object SyncManager {
         pullCollections = { profileId -> CollectionSyncService.pullFromServer(profileId) },
         pullHomeCatalogSettings = { profileId -> HomeCatalogSettingsSyncService.pullFromServer(profileId) },
     )
-    private val profileActivitySyncOperations = ProfileActivitySyncOperations(
-        pullLibrary = { profileId -> LibraryRepository.pullFromServer(profileId) },
-        pullWatchActivity = { profileId ->
-            val result = WatchProgressSourceCoordinator.refreshActiveSource(profileId = profileId, force = false)
-            check(result.succeeded) {
-                "Active watch source refresh was incomplete: " +
-                    "progress=${result.progressRefreshed} watched=${result.watchedHistoryRefreshed}"
-            }
-        },
-    )
 
     fun pullAllForProfile(profileId: Int) {
         startFullProfilePull(profileId = profileId, reason = "requested")
     }
 
     internal fun cancelAccountSync() {
-        syncRequestGate.cancel()
+        fullSyncRequestGate.cancel()
         val previousAccountJob = synchronized(accountScopeLock) {
             accountScopeJob.also {
                 accountScopeJob = SupervisorJob()
@@ -320,8 +249,7 @@ object SyncManager {
             foregroundPullJob.also {
                 foregroundPullJob = null
                 foregroundPullProfileId = null
-                activityPullFreshness = ProfilePullFreshness()
-                fullPullFreshness = ProfilePullFreshness()
+                pullFreshness = ProfilePullFreshness()
             }
         }
         foregroundJob?.cancel()
@@ -336,7 +264,7 @@ object SyncManager {
         val authState = AuthRepository.state.value
         if (authState !is AuthState.Authenticated || authState.isAnonymous) return
 
-        if (!force && hasRecentActivityPull(profileId)) {
+        if (!force && hasRecentFullPull(profileId)) {
             return
         }
         lateinit var requestJob: Job
@@ -356,9 +284,9 @@ object SyncManager {
                     if (!force) {
                         delay(FOREGROUND_PULL_DELAY_MS)
                     }
-                    if (!force && hasRecentActivityPull(profileId)) return@launch
+                    if (!force && hasRecentFullPull(profileId)) return@launch
                     if (ProfileRepository.activeProfileId != profileId) return@launch
-                    startActivityProfilePull(profileId = profileId, reason = "foreground")
+                    pullForegroundForProfile(profileId)
                 } finally {
                     synchronized(pullStateLock) {
                         if (foregroundPullJob === requestJob) {
@@ -375,14 +303,43 @@ object SyncManager {
         requestJob.start()
     }
 
-    private fun hasRecentActivityPull(profileId: Int): Boolean =
+    private fun hasRecentFullPull(profileId: Int): Boolean =
         synchronized(pullStateLock) {
-            activityPullFreshness.isRecent(
+            pullFreshness.isRecent(
                 profileId = profileId,
                 nowEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
-                minIntervalMs = FOREGROUND_ACTIVITY_PULL_MIN_INTERVAL_MS,
+                minIntervalMs = FOREGROUND_PULL_MIN_INTERVAL_MS,
             )
         }
+
+    private suspend fun pullForegroundForProfile(profileId: Int) {
+        log.i { "Foreground sync started profile=$profileId" }
+
+        runCatching { ProfileRepository.pullProfiles() }
+            .onFailure { log.e(it) { "Foreground profiles pull failed" } }
+        val syncResult = runOrderedProfileSync(
+            profileId = profileId,
+            pluginsEnabled = AppFeaturePolicy.pluginsEnabled,
+            operations = profileSyncOperations,
+            onFailure = { step, error ->
+                log.e(error) { "Foreground profile sync step failed profile=$profileId step=$step" }
+            },
+        )
+        synchronized(pullStateLock) {
+            pullFreshness = pullFreshness.recordIfSuccessful(
+                profileId = profileId,
+                completedAtEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
+                result = syncResult,
+            )
+        }
+        if (!syncResult.succeeded) {
+            log.w {
+                "Foreground profile sync incomplete profile=$profileId failedSteps=${syncResult.failedSteps}"
+            }
+        }
+
+        log.i { "Foreground sync completed profile=$profileId" }
+    }
 
     private fun startFullProfilePull(
         profileId: Int,
@@ -391,12 +348,10 @@ object SyncManager {
         val authState = AuthRepository.state.value
         if (authState !is AuthState.Authenticated || authState.isAnonymous) return
         if (ProfileRepository.activeProfileId != profileId) return
-        if (hasRecentFullPull(profileId)) return
 
-        val result = syncRequestGate.launch(
+        val result = fullSyncRequestGate.launch(
             scope = accountScopeSnapshot(),
             profileId = profileId,
-            kind = ProfileSyncRequestKind.Full,
         ) {
             val currentAuthState = AuthRepository.state.value
             if (currentAuthState !is AuthState.Authenticated || currentAuthState.isAnonymous) return@launch
@@ -417,12 +372,7 @@ object SyncManager {
                 WatchProgressSourceCoordinator.resumeAutomaticTransitions()
             }
             synchronized(pullStateLock) {
-                activityPullFreshness = activityPullFreshness.recordIfSuccessful(
-                    profileId = profileId,
-                    completedAtEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
-                    result = syncResult,
-                )
-                fullPullFreshness = fullPullFreshness.recordIfSuccessful(
+                pullFreshness = pullFreshness.recordIfSuccessful(
                     profileId = profileId,
                     completedAtEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
                     result = syncResult,
@@ -445,64 +395,6 @@ object SyncManager {
             ProfileSyncRequestResult.Replaced -> {
                 log.d { "Full profile sync replaced stale profile request with profile=$profileId reason=$reason" }
             }
-        }
-    }
-
-    private fun hasRecentFullPull(profileId: Int): Boolean =
-        synchronized(pullStateLock) {
-            fullPullFreshness.isRecent(
-                profileId = profileId,
-                nowEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
-                minIntervalMs = FULL_PULL_MIN_INTERVAL_MS,
-            )
-        }
-
-    private fun startActivityProfilePull(
-        profileId: Int,
-        reason: String,
-        pullLibrary: Boolean = true,
-        pullWatchActivity: Boolean = true,
-    ) {
-        val authState = AuthRepository.state.value
-        if (authState !is AuthState.Authenticated || authState.isAnonymous) return
-        if (ProfileRepository.activeProfileId != profileId) return
-
-        val result = syncRequestGate.launch(
-            scope = accountScopeSnapshot(),
-            profileId = profileId,
-            kind = ProfileSyncRequestKind.Activity,
-        ) {
-            val currentAuthState = AuthRepository.state.value
-            if (currentAuthState !is AuthState.Authenticated || currentAuthState.isAnonymous) return@launch
-            if (ProfileRepository.activeProfileId != profileId) return@launch
-
-            log.i { "Activity sync started profile=$profileId reason=$reason" }
-            val syncResult = runActivityProfileSync(
-                profileId = profileId,
-                pullLibrary = pullLibrary,
-                pullWatchActivity = pullWatchActivity,
-                operations = profileActivitySyncOperations,
-                onFailure = { step, error ->
-                    log.e(error) { "Activity sync step failed profile=$profileId step=$step" }
-                },
-            )
-            synchronized(pullStateLock) {
-                activityPullFreshness = activityPullFreshness.recordIfSuccessful(
-                    profileId = profileId,
-                    completedAtEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
-                    result = syncResult,
-                )
-            }
-            if (!syncResult.succeeded) {
-                log.w {
-                    "Activity sync incomplete profile=$profileId reason=$reason failedSteps=${syncResult.failedSteps}"
-                }
-            }
-            log.i { "Activity sync completed profile=$profileId reason=$reason" }
-        }
-
-        if (result == ProfileSyncRequestResult.Coalesced) {
-            log.d { "Activity sync coalesced profile=$profileId reason=$reason" }
         }
     }
 
@@ -545,12 +437,19 @@ object SyncManager {
                     continue
                 }
 
-                startActivityProfilePull(
-                    profileId = profileId,
-                    reason = "periodic",
-                    pullLibrary = shouldPullLibrary,
-                    pullWatchActivity = shouldPullWatchProgress,
-                )
+                log.i {
+                    "Periodic Nuvio sync pull profile=$profileId " +
+                        "library=$shouldPullLibrary watchProgress=$shouldPullWatchProgress"
+                }
+                if (shouldPullLibrary) {
+                    runCatching { LibraryRepository.pullFromServer(profileId) }
+                        .onFailure { log.e(it) { "Periodic Nuvio library pull failed" } }
+                }
+                if (shouldPullWatchProgress) {
+                    runCatching {
+                        WatchProgressSourceCoordinator.refreshActiveSource(profileId = profileId, force = false)
+                    }.onFailure { log.e(it) { "Periodic Nuvio watch source pull failed" } }
+                }
             }
         }
     }

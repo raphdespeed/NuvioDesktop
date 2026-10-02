@@ -105,30 +105,21 @@ internal fun sortLibraryItems(
     items: List<LibraryItem>,
     selected: LibrarySortOption,
     sourceMode: LibrarySourceMode,
-    listKey: String? = null,
-    providerOrder: Map<String, Int>? = null,
 ): List<LibraryItem> =
     when (effectiveLibrarySortOption(selected, sourceMode)) {
         LibrarySortOption.DEFAULT -> items.sortedWith(
-            if (sourceMode == LibrarySourceMode.MDBLIST) {
-                compareByDescending<LibraryItem> { it.savedAtEpochMs }
-                    .thenByDescending { it.listRanks[listKey] ?: Int.MIN_VALUE }
-                    .thenBy { libraryTitleTieBreakKey(it) }
-                    .thenBy { it.id }
-            } else {
-                compareBy<LibraryItem> { it.listRanks[listKey] ?: it.traktRank ?: Int.MAX_VALUE }
-                    .thenByDescending { it.savedAtEpochMs }
-                    .thenBy { libraryTitleTieBreakKey(it) }
-                    .thenBy { it.id }
-            },
+            compareBy<LibraryItem> { it.traktRank ?: Int.MAX_VALUE }
+                .thenByDescending { it.savedAtEpochMs }
+                .thenBy { libraryTitleTieBreakKey(it) }
+                .thenBy { it.id },
         )
         LibrarySortOption.ADDED_DESC -> items.sortedWith(
-            providerOrder?.let(::libraryProviderOrderComparator) ?: compareByDescending<LibraryItem> { it.savedAtEpochMs }
+            compareByDescending<LibraryItem> { it.savedAtEpochMs }
                 .thenBy { libraryTitleTieBreakKey(it) }
                 .thenBy { it.id },
         )
         LibrarySortOption.ADDED_ASC -> items.sortedWith(
-            providerOrder?.let(::libraryProviderOrderComparator) ?: compareBy<LibraryItem> { it.savedAtEpochMs }
+            compareBy<LibraryItem> { it.savedAtEpochMs }
                 .thenBy { libraryTitleTieBreakKey(it) }
                 .thenBy { it.id },
         )
@@ -146,10 +137,9 @@ internal fun sortLibrarySections(
     sections: List<LibrarySection>,
     selected: LibrarySortOption,
     sourceMode: LibrarySourceMode,
-    providerOrders: Map<String, Map<String, Int>> = emptyMap(),
 ): List<LibrarySection> =
     sections.map { section ->
-        section.copy(items = sortLibraryItems(section.items, selected, sourceMode, section.type, providerOrders[section.type]))
+        section.copy(items = sortLibraryItems(section.items, selected, sourceMode))
     }
 
 internal fun buildLibraryVerticalProjection(
@@ -158,7 +148,6 @@ internal fun buildLibraryVerticalProjection(
     selectedSectionKey: String?,
     selectedType: String?,
     sortOption: LibrarySortOption,
-    providerOrders: Map<String, Map<String, Int>> = emptyMap(),
 ): LibraryVerticalProjection {
     val availableSections = if (sourceMode.isRemoteTrackingSource) sections else emptyList()
     val selectedSection = if (sourceMode.isRemoteTrackingSource) {
@@ -181,7 +170,7 @@ internal fun buildLibraryVerticalProjection(
         }
     }
     val availableTypes = deduplicatedEntries.values
-        .map { entry -> (entry.item.mediaCategory ?: entry.item.type).normalizedLibraryType() }
+        .map { entry -> entry.item.type.normalizedLibraryType() }
         .filter { it.isNotBlank() }
         .distinct()
         .sorted()
@@ -189,15 +178,13 @@ internal fun buildLibraryVerticalProjection(
         ?.normalizedLibraryType()
         ?.takeIf { it in availableTypes }
     val filteredEntries = deduplicatedEntries.values.filter { entry ->
-        effectiveType == null || (entry.item.mediaCategory ?: entry.item.type).normalizedLibraryType() == effectiveType
+        effectiveType == null || entry.item.type.normalizedLibraryType() == effectiveType
     }
     val entryByKey = filteredEntries.associateBy { entry -> libraryDisplayItemKey(entry.item) }
     val sortedEntries = sortLibraryItems(
         items = filteredEntries.map { entry -> entry.item },
         selected = sortOption,
         sourceMode = sourceMode,
-        listKey = selectedSection?.type,
-        providerOrder = providerOrders[selectedSection?.type],
     ).mapNotNull { item -> entryByKey[libraryDisplayItemKey(item)] }
 
     return LibraryVerticalProjection(
@@ -252,7 +239,7 @@ private fun libraryTitleTieBreakKey(item: LibraryItem): String =
         .ifBlank { item.id }
         .lowercase()
 
-internal fun libraryDisplayItemKey(item: LibraryItem): String =
+private fun libraryDisplayItemKey(item: LibraryItem): String =
     "${item.type.normalizedLibraryType()}:${item.id.trim()}"
 
 private fun String.normalizedLibraryType(): String = trim().lowercase()
@@ -265,6 +252,3 @@ private data class StoredLibraryDisplaySettings(
     @SerialName("layout_mode") val layoutMode: String = LibraryLayoutMode.HORIZONTAL.name,
     @SerialName("sort_option") val sortOption: String = LibrarySortOption.DEFAULT.name,
 )
-
-private fun libraryProviderOrderComparator(ranks: Map<String, Int>): Comparator<LibraryItem> =
-    compareBy<LibraryItem> { ranks[libraryDisplayItemKey(it)] ?: Int.MAX_VALUE }.thenBy { it.id }

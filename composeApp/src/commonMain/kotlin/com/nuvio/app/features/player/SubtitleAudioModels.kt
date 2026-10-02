@@ -2,8 +2,6 @@ package com.nuvio.app.features.player
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import com.nuvio.app.isDesktop
-import com.nuvio.app.isIos
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_track_number
 import org.jetbrains.compose.resources.stringResource
@@ -35,30 +33,47 @@ data class AddonSubtitle(
     val isSelected: Boolean = false,
 )
 
-internal enum class SubtitleTab {
+internal val AddonSubtitle.selectionKey: String
+    get() = "${addonName.orEmpty()}|$id|$url"
+
+enum class SubtitleTab {
     BuiltIn,
     Addons,
+    Sync,
     Style,
 }
 
-const val SUBTITLE_DELAY_MIN_MS = -60_000
-const val SUBTITLE_DELAY_MAX_MS = 60_000
-const val SUBTITLE_DELAY_STEP_MS = 100
-const val SUBTITLE_AUTO_SYNC_REACTION_COMPENSATION_MS = 300L
+enum class AddonSubtitleStartupMode {
+    FAST_STARTUP,
+    PREFERRED_ONLY,
+    ALL_SUBTITLES,
+}
 
-internal val subtitleFontSizeRangeSp: IntRange
-    get() = if (isDesktop || isIos) 6..40 else 12..40
+enum class SubtitleFontFamily {
+    System,
+    SansSerif,
+    Serif,
+    Monospace,
+    Rounded,
+    Custom,
+}
+
+const val SUBTITLE_DELAY_MIN_MS = -600_000
+const val SUBTITLE_DELAY_MAX_MS = 600_000
+const val SUBTITLE_DELAY_STEP_MS = 100
 
 data class SubtitleStyleState(
     val textColor: Color = Color.White,
     val backgroundColor: Color = Color.Transparent,
     val outlineColor: Color = Color.Black,
     val outlineEnabled: Boolean = true,
-    val outlineWidth: Int = 2,
+    val outlineWidth: Int = 1,
     val bold: Boolean = false,
     val fontSizeSp: Int = 18,
+    val fontFamily: SubtitleFontFamily = SubtitleFontFamily.System,
+    val customFontName: String? = null,
+    val customFontPath: String? = null,
     val bottomOffset: Int = 20,
-    val stripSdh: Boolean = false,
     val useForcedSubtitles: Boolean = false,
     val showOnlyPreferredLanguages: Boolean = false,
 ) {
@@ -67,9 +82,20 @@ data class SubtitleStyleState(
     }
 }
 
+fun SubtitleStyleState.usesCustomFont(): Boolean =
+    fontFamily == SubtitleFontFamily.Custom && !customFontPath.isNullOrBlank()
+
+fun SubtitleStyleState.shouldUseLibass(libassEnabled: Boolean): Boolean =
+    libassEnabled && !usesCustomFont()
+
+data class SubtitleFontImportResult(
+    val displayName: String,
+    val path: String,
+)
+
 data class SubtitleSyncCue(
     val startTimeMs: Long,
-    val endTimeMs: Long = startTimeMs + 5_000L,
+    val endTimeMs: Long? = null,
     val text: String,
 )
 
@@ -150,6 +176,7 @@ data class SubtitleAudioUiState(
     val subtitleStyle: SubtitleStyleState = SubtitleStyleState.DEFAULT,
     val showAudioModal: Boolean = false,
     val showSubtitleModal: Boolean = false,
+    val activeSubtitleTab: SubtitleTab = SubtitleTab.BuiltIn,
 )
 
 @Composable

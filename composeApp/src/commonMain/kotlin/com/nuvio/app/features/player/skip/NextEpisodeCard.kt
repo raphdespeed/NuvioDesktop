@@ -1,9 +1,11 @@
 package com.nuvio.app.features.player.skip
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -11,7 +13,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,37 +31,26 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.dismiss
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
-import com.nuvio.app.core.ui.PlatformBackHandler
+import coil3.compose.AsyncImage
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_episode_title_format
 import nuvio.composeapp.generated.resources.detail_btn_play
 import nuvio.composeapp.generated.resources.player_next_episode
 import nuvio.composeapp.generated.resources.player_next_episode_finding_source
 import nuvio.composeapp.generated.resources.player_next_episode_playing_via_countdown
+import nuvio.composeapp.generated.resources.player_next_episode_ready_via
 import nuvio.composeapp.generated.resources.player_next_episode_thumbnail
 import nuvio.composeapp.generated.resources.player_next_episode_unaired
 import org.jetbrains.compose.resources.stringResource
@@ -70,33 +60,25 @@ fun NextEpisodeCard(
     nextEpisode: NextEpisodeInfo?,
     visible: Boolean,
     isAutoPlaySearching: Boolean,
+    isAutoPlayReady: Boolean,
     autoPlaySourceName: String?,
     autoPlayCountdownSec: Int?,
-    blurred: Boolean,
     onPlayNext: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (nextEpisode == null) return
 
-    PlatformBackHandler(enabled = visible, onBack = onDismiss)
     val isPlayable = nextEpisode.hasAired
-    var dragOffsetX by remember(nextEpisode.videoId) { mutableFloatStateOf(0f) }
-    var dragging by remember(nextEpisode.videoId) { mutableStateOf(false) }
-    val animatedOffsetX by animateFloatAsState(
-        targetValue = dragOffsetX,
-        animationSpec = if (dragging) snap() else tween(160),
-        label = "next_episode_swipe",
+    val statusPulse by rememberInfiniteTransition(label = "nextEpisodeStatusPulse").animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(850),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "nextEpisodeStatusPulseValue",
     )
-    val dismissThreshold = with(LocalDensity.current) { 60.dp.toPx() }
-    val currentOnDismiss by rememberUpdatedState(onDismiss)
-
-    LaunchedEffect(nextEpisode.videoId, visible) {
-        if (visible) {
-            dragging = false
-            dragOffsetX = 0f
-        }
-    }
 
     AnimatedVisibility(
         visible = visible,
@@ -110,39 +92,10 @@ fun NextEpisodeCard(
         Row(
             modifier = Modifier
                 .widthIn(max = 292.dp)
-                .graphicsLayer { translationX = animatedOffsetX }
                 .clip(shape)
                 .background(Color(0xFF191919).copy(alpha = 0.89f))
                 .border(1.dp, Color.White.copy(alpha = 0.12f), shape)
-                .pointerInput(nextEpisode.videoId, visible, dismissThreshold) {
-                    if (!visible) return@pointerInput
-                    detectHorizontalDragGestures(
-                        onDragStart = {
-                            dragOffsetX = animatedOffsetX
-                            dragging = true
-                        },
-                        onHorizontalDrag = { change, amount ->
-                            change.consume()
-                            dragOffsetX = (dragOffsetX + amount).coerceAtLeast(0f)
-                        },
-                        onDragEnd = {
-                            dragging = false
-                            if (dragOffsetX >= dismissThreshold) {
-                                currentOnDismiss()
-                            } else {
-                                dragOffsetX = 0f
-                            }
-                        },
-                        onDragCancel = {
-                            dragging = false
-                            dragOffsetX = 0f
-                        },
-                    )
-                }
-                .semantics {
-                    if (visible) dismiss { currentOnDismiss(); true }
-                }
-                .clickable(enabled = visible) { if (isPlayable) onPlayNext() }
+                .clickable { if (isPlayable) onPlayNext() }
                 .padding(horizontal = 9.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -155,9 +108,7 @@ fun NextEpisodeCard(
                 AsyncImage(
                     model = nextEpisode.thumbnail,
                     contentDescription = stringResource(Res.string.player_next_episode_thumbnail),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(if (blurred) Modifier.blur(18.dp) else Modifier),
+                    modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                 )
                 Box(
@@ -204,6 +155,10 @@ fun NextEpisodeCard(
                 val autoPlayStatus = when {
                     !isPlayable && !nextEpisode.unairedMessage.isNullOrBlank() -> nextEpisode.unairedMessage
                     isAutoPlaySearching -> stringResource(Res.string.player_next_episode_finding_source)
+                    isAutoPlayReady -> stringResource(
+                        Res.string.player_next_episode_ready_via,
+                        autoPlaySourceName ?: "Provider",
+                    )
                     !autoPlaySourceName.isNullOrBlank() && autoPlayCountdownSec != null ->
                         stringResource(
                             Res.string.player_next_episode_playing_via_countdown,
@@ -214,13 +169,25 @@ fun NextEpisodeCard(
                 }
                 if (autoPlayStatus != null) {
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = autoPlayStatus,
-                        color = Color.White.copy(alpha = 0.78f),
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .graphicsLayer { alpha = if (isAutoPlaySearching) statusPulse else 1f }
+                                .background(
+                                    if (isAutoPlayReady) Color(0xFF72E6A1) else Color(0xFF8AC7FF),
+                                    CircleShape,
+                                ),
+                        )
+                        Text(
+                            text = autoPlayStatus,
+                            color = if (isAutoPlayReady) Color(0xFF9AF0BD) else Color.White.copy(alpha = 0.78f),
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 5.dp),
+                        )
+                    }
                 }
             }
 

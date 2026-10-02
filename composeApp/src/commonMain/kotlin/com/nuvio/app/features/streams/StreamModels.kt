@@ -1,7 +1,11 @@
 package com.nuvio.app.features.streams
 
 import com.nuvio.app.core.build.AppFeaturePolicy
+import io.ktor.http.Url
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.getString
 
 @Serializable
 data class StreamSubtitle(
@@ -32,7 +36,7 @@ data class StreamItem(
     val badges: List<StreamBadge> = emptyList(),
 ) {
     val streamLabel: String
-        get() = name?.takeIf { it.isNotBlank() } ?: "Stream"
+        get() = name ?: runBlocking { getString(Res.string.stream_default_name) }
 
     val streamSubtitle: String?
         get() = description
@@ -98,10 +102,16 @@ data class StreamItem(
         get() = fileIdx ?: torrentSchemeUri.extractTorrentSchemeFileIdx()
 
     val p2pTrackers: List<String>
-        get() = sources
+        get() = (sources + clientResolve?.sources.orEmpty())
             .asSequence()
             .filter { it.startsWith("tracker:") }
             .map { it.removePrefix("tracker:").trim() }
+            .plus(
+                torrentMagnetUri
+                    ?.let { magnet -> runCatching { Url(magnet).parameters.getAll("tr") }.getOrNull() }
+                    .orEmpty()
+                    .asSequence(),
+            )
             .filter { it.isNotEmpty() }
             .distinct()
             .toList()
@@ -288,7 +298,6 @@ enum class StreamsEmptyStateReason {
 
 data class StreamsUiState(
     val requestToken: String? = null,
-    val autoPlayDecided: Boolean = false,
     val groups: List<AddonStreamGroup> = emptyList(),
     val activeAddonIds: Set<String> = emptySet(),
     val selectedFilter: String? = null,

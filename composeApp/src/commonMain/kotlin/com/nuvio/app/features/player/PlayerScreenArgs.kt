@@ -2,12 +2,6 @@ package com.nuvio.app.features.player
 
 import androidx.compose.ui.Modifier
 
-internal typealias PlayerReleaseBeforeBack = (
-    onReleased: () -> Unit,
-    onReleaseFailed: (String) -> Unit,
-) -> Unit
-internal typealias PlayerBackRequest = (releaseBeforeBack: PlayerReleaseBeforeBack) -> Unit
-
 internal data class PlayerScreenArgs(
     val profileId: Int,
     val title: String,
@@ -21,8 +15,7 @@ internal data class PlayerScreenArgs(
     val streamSubtitle: String?,
     val initialBingeGroup: String?,
     val pauseDescription: String?,
-    val onBack: PlayerBackRequest,
-    val onSystemBackHandlerChanged: (handler: (() -> Unit)?) -> Unit = {},
+    val onBack: () -> Unit,
     val onOpenInExternalPlayer: ((ExternalPlayerPlaybackRequest) -> Unit)?,
     val onOpenExternalUrl: ((String) -> Unit)?,
     val modifier: Modifier,
@@ -46,5 +39,5 @@ internal data class PlayerScreenArgs(
     val initialPositionMs: Long,
     val initialProgressFraction: Float?,
     val contentLanguage: String? = null,
-    val launchId: Long? = null,
+    val randomEpisodeMode: Boolean = false,
 )

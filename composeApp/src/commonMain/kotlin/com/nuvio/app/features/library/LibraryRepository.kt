@@ -10,8 +10,6 @@ import com.nuvio.app.features.library.sync.consumeCursorPages
 import com.nuvio.app.features.library.sync.libraryDeltaPageSize
 import com.nuvio.app.features.library.sync.librarySnapshotPageSize
 import com.nuvio.app.features.profiles.ProfileRepository
-import com.nuvio.app.core.poster.CustomPosterUrlRepository
-import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.tracking.TrackingLibraryProvider
 import com.nuvio.app.features.tracking.TrackingLibraryTab
 import com.nuvio.app.features.tracking.TrackingLibraryTabKind
@@ -34,7 +32,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +41,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.media_movies
+import nuvio.composeapp.generated.resources.media_series
 import nuvio.composeapp.generated.resources.library_local_tab_title
 import nuvio.composeapp.generated.resources.library_other
 import org.jetbrains.compose.resources.StringResource
@@ -100,15 +99,6 @@ object LibraryRepository {
                     }
                 }
             }
-        }
-        syncScope.launch {
-            kotlinx.coroutines.flow.combine(
-                CustomPosterUrlRepository.pattern,
-                CustomPosterUrlRepository.enabledScreens
-            ) { _, _ -> Unit }
-                .distinctUntilChanged()
-                .drop(1)
-                .collectLatest { publish() }
         }
     }
 
@@ -203,6 +193,7 @@ object LibraryRepository {
             log.d { "Skipping library pull for inactive profile $profileId" }
             return
         }
+        var serializedOperationToken: LibraryProfileToken? = null
 
         activeLibraryProvider()?.let { provider ->
             refreshLibraryProvider(
@@ -217,6 +208,7 @@ object LibraryRepository {
 
         nuvioSyncMutex.withLock {
             val serializedToken = activeOperationToken(profileId) ?: return@withLock
+            serializedOperationToken = serializedToken
             val pullSnapshot = localState.markPullStarted(serializedToken) ?: return@withLock
 
             try {
@@ -246,6 +238,11 @@ object LibraryRepository {
             } catch (error: Throwable) {
                 log.e(error) { "Failed to pull library from server" }
             }
+        }
+        val completedToken = serializedOperationToken ?: operationToken
+        val pendingSnapshot = localState.snapshot()
+        if (pendingSnapshot.token == completedToken && isActiveOperation(completedToken)) {
+            pushToServer(pendingSnapshot, delayMs = 0L)
         }
     }
 
@@ -406,19 +403,6 @@ object LibraryRepository {
             TrackingProviderRegistry.connectedLibraryProviders()
                 .flatMap { provider -> provider.snapshot().tabs },
         ).filter { tab -> item == null || tab.supportsContentType(item.type) }
-
-    internal fun listManagementContext(): LibraryManagementContext? {
-        val source = effectiveLibrarySourceMode()
-        val provider = activeLibraryProvider(source) ?: return null
-        if (provider.listManager == null) return null
-        val account = TrackingProviderRegistry.authProvider(provider.providerId) ?: return null
-        return LibraryManagementContext(ProfileRepository.activeProfileId, source, account.accountGeneration)
-    }
-
-    internal fun listManager(context: LibraryManagementContext): com.nuvio.app.features.tracking.TrackingListManager {
-        check(context == listManagementContext()) { "Library account changed" }
-        return requireNotNull(activeLibraryProvider(context.source)?.listManager)
-    }
 
     suspend fun getMembershipSnapshot(item: LibraryItem): Map<String, Boolean> {
         ensureLoaded()
@@ -600,15 +584,12 @@ object LibraryRepository {
     private fun publish() {
         val localSnapshot = localState.snapshot()
         val sourceMode = effectiveLibrarySourceMode()
-        val posterPattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.LIBRARY)
         activeLibraryProvider(sourceMode)?.let { provider ->
             val providerSnapshot = provider.snapshot()
             val newUiState = LibraryUiState(
                 sourceMode = sourceMode,
-                items = providerSnapshot.items.withCustomPosterUrls(posterPattern),
-                sections = providerSnapshot.sections.map { section ->
-                    section.copy(items = section.items.withCustomPosterUrls(posterPattern))
-                },
+                items = providerSnapshot.items,
+                sections = providerSnapshot.sections,
                 isLoaded = providerSnapshot.hasLoaded,
                 isLoading = providerSnapshot.isLoading,
                 errorMessage = providerSnapshot.errorMessage,
@@ -630,14 +611,20 @@ object LibraryRepository {
                     items = typeItems.sortedByDescending { it.savedAtEpochMs },
                 )
             }
-            .sortedBy { it.displayTitle }
+            .sortedWith(
+                compareBy<LibrarySection> { section ->
+                    when (section.type.lowercase()) {
+                        "movie" -> 0
+                        "series" -> 1
+                        else -> 2
+                    }
+                }.thenBy { it.displayTitle },
+            )
 
         val newUiState = LibraryUiState(
             sourceMode = LibrarySourceMode.LOCAL,
-            items = items.withCustomPosterUrls(posterPattern),
-            sections = sections.map { section ->
-                section.copy(items = section.items.withCustomPosterUrls(posterPattern))
-            },
+            items = items,
+            sections = sections,
             isLoaded = localSnapshot.hasLoaded,
             isLoading = localSnapshot.isLoading,
             errorMessage = null,
@@ -749,13 +736,23 @@ internal fun String.toLibraryDisplayTitle(): String {
     val normalized = trim()
     if (normalized.isBlank()) return localizedLibraryOtherTitle()
 
-    return normalized
-        .split('-', '_', ' ')
-        .filter { it.isNotBlank() }
-        .joinToString(" ") { token ->
-            token.lowercase().replaceFirstChar { char -> char.uppercase() }
-        }
-        .ifBlank { localizedLibraryOtherTitle() }
+    return when (normalized.lowercase()) {
+        "movie" -> localizedStringOrDefault(
+            resource = Res.string.media_movies,
+            fallback = "Movies",
+        )
+        "series" -> localizedStringOrDefault(
+            resource = Res.string.media_series,
+            fallback = "Series",
+        )
+        else -> normalized
+            .split('-', '_', ' ')
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { token ->
+                token.lowercase().replaceFirstChar { char -> char.uppercase() }
+            }
+            .ifBlank { localizedLibraryOtherTitle() }
+    }
 }
 
 private fun localizedLibraryOtherTitle(): String =

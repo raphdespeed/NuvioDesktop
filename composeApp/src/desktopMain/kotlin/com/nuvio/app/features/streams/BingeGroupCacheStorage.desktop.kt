@@ -1,19 +1,30 @@
 package com.nuvio.app.features.streams
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 import com.nuvio.app.core.storage.ProfileScopedKey
 
-internal actual object BingeGroupCacheStorage {
-    private val store = DesktopStorage.store("nuvio_binge_group_cache")
+actual object BingeGroupCacheStorage {
+    private const val preferencesName = "nuvio_binge_group_cache"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun load(hashedKey: String): String? =
-        store.getString(ProfileScopedKey.of(hashedKey))
+        preferences?.getString(ProfileScopedKey.of(hashedKey), null)
 
     actual fun save(hashedKey: String, value: String) {
-        store.putString(ProfileScopedKey.of(hashedKey), value)
+        preferences
+            ?.edit()
+            ?.putString(ProfileScopedKey.of(hashedKey), value)
+            ?.apply()
     }
 
     actual fun remove(hashedKey: String) {
-        store.remove(ProfileScopedKey.of(hashedKey))
+        preferences
+            ?.edit()
+            ?.remove(ProfileScopedKey.of(hashedKey))
+            ?.apply()
     }
 }

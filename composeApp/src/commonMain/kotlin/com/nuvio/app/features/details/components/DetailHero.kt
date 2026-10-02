@@ -25,8 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.VolumeOff
-import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -48,14 +49,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.graphicsLayer
-import com.nuvio.app.core.ui.NuvioDesktopImageScaling
-import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
-import com.nuvio.app.core.ui.desktopPageHorizontalPaddingForWidth
+import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.heroStretchHeight
 import com.nuvio.app.core.ui.heroStretchZoom
 import com.nuvio.app.features.details.MetaDetails
-import com.nuvio.app.features.tmdb.originalTmdbImageUrl
-import com.nuvio.app.isDesktop
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
@@ -64,14 +61,14 @@ fun DetailHero(
     meta: MetaDetails,
     isTablet: Boolean = false,
     scrollOffset: () -> Int = { 0 },
+    scrollOffsetProvider: (() -> Float)? = null,
     stretchPx: () -> Float = { 0f },
     contentMaxWidth: Dp = 560.dp,
-    viewportHeight: Dp = 0.dp,
     onHeightChanged: (Int) -> Unit = {},
     heroTrailerSourceUrl: String? = null,
     heroTrailerSourceAudioUrl: String? = null,
     heroTrailerReady: Boolean = false,
-    heroTrailerPlayWhenReady: () -> Boolean = { false },
+    heroTrailerPlayWhenReady: Boolean = false,
     heroTrailerMuted: Boolean = true,
     heroGradientColor: Color? = null,
     onBackdropLoaded: (Painter, ImageBitmap?) -> Unit = { _, _ -> },
@@ -81,17 +78,11 @@ fun DetailHero(
     onHeroTrailerError: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val resolvedScrollOffset = scrollOffsetProvider ?: { scrollOffset().toFloat() }
     BoxWithConstraints(
         modifier = modifier.fillMaxWidth(),
     ) {
-        val heroHeight = detailHeroHeight(maxWidth, viewportHeight, isTablet)
-        val foregroundHorizontalPadding = if (isDesktop) {
-            desktopPageHorizontalPaddingForWidth(maxWidth.value)
-        } else if (isTablet) {
-            32.dp
-        } else {
-            18.dp
-        }
+        val heroHeight = detailHeroHeight(maxWidth, isTablet)
         val trailerAlpha by animateFloatAsState(
             targetValue = if (heroTrailerReady) 1f else 0f,
             animationSpec = tween(durationMillis = 300),
@@ -124,10 +115,9 @@ fun DetailHero(
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 val imageUrl = meta.background ?: meta.poster
-                val backdropScale = if (isTablet) 1f else 1.08f
                 if (imageUrl != null) {
                     AsyncImage(
-                        model = if (isDesktop) originalTmdbImageUrl(imageUrl) else imageUrl,
+                        model = imageUrl,
                         contentDescription = meta.name,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -135,13 +125,12 @@ fun DetailHero(
                             .height(heroHeight)
                             .heroStretchZoom(stretchPx)
                             .graphicsLayer {
-                                translationY = scrollOffset() * 0.5f
-                                scaleX = backdropScale
-                                scaleY = backdropScale
-                            },
+                                translationY = resolvedScrollOffset() * 0.5f
+                                scaleX = 1.08f
+                                scaleY = 1.08f
+                        },
                         alignment = if (isTablet) Alignment.TopCenter else Alignment.Center,
                         contentScale = ContentScale.Crop,
-                        desktopImageScaling = NuvioDesktopImageScaling.Disabled,
                         onSuccess = { state ->
                             onBackdropLoaded(
                                 state.painter,
@@ -160,7 +149,7 @@ fun DetailHero(
                     HeroTrailerPlayerSurface(
                         sourceUrl = heroTrailerSourceUrl,
                         sourceAudioUrl = heroTrailerSourceAudioUrl,
-                        playWhenReady = heroTrailerPlayWhenReady(),
+                        playWhenReady = heroTrailerPlayWhenReady,
                         muted = heroTrailerMuted,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -169,9 +158,9 @@ fun DetailHero(
                             .heroStretchZoom(stretchPx)
                             .graphicsLayer {
                                 alpha = trailerAlpha
-                                translationY = scrollOffset() * 0.5f
-                                scaleX = backdropScale
-                                scaleY = backdropScale
+                                translationY = resolvedScrollOffset() * 0.5f
+                                scaleX = 1.08f
+                                scaleY = 1.08f
                             },
                         onReady = onHeroTrailerReady,
                         onEnded = onHeroTrailerEnded,
@@ -180,6 +169,7 @@ fun DetailHero(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .focusProperties { canFocus = false }
                             .clickable(
                                 enabled = heroTrailerReady,
                                 interactionSource = remember { MutableInteractionSource() },
@@ -193,7 +183,7 @@ fun DetailHero(
                             .align(Alignment.TopEnd)
                             .padding(
                                 top = heroChromeTopPadding,
-                                end = if (isDesktop) foregroundHorizontalPadding else if (isTablet) 32.dp else 22.dp,
+                                end = if (isTablet) 32.dp else 22.dp,
                             )
                             .graphicsLayer {
                                 alpha = trailerAlpha * 0.72f
@@ -210,7 +200,7 @@ fun DetailHero(
                         label = "detail_hero_trailer_mute_icon",
                     ) { muted ->
                         Icon(
-                            imageVector = if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp,
+                            imageVector = if (muted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(muteIconSize),
@@ -241,7 +231,7 @@ fun DetailHero(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = foregroundHorizontalPadding)
+                        .padding(horizontal = if (isTablet) 32.dp else 18.dp)
                         .padding(bottom = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -281,13 +271,9 @@ fun DetailHero(
     }
 }
 
-private fun detailHeroHeight(maxWidth: Dp, viewportHeight: Dp, isTablet: Boolean): Dp =
+private fun detailHeroHeight(maxWidth: Dp, isTablet: Boolean): Dp =
     if (!isTablet) {
         (maxWidth * 1.33f).coerceIn(420.dp, 760.dp)
     } else {
-        val viewportLimit = viewportHeight
-            .takeIf { it > 0.dp }
-            ?.let { it * 0.72f }
-            ?: 1080.dp
-        minOf(maxWidth * 9f / 16f, viewportLimit).coerceIn(420.dp, 1080.dp)
+        (maxWidth * 0.42f).coerceIn(300.dp, 420.dp)
     }

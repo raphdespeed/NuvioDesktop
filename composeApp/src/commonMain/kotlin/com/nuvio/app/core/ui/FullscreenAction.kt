@@ -35,7 +35,7 @@ internal expect fun isFullscreenActionActive(): Boolean
 internal expect fun toggleFullscreenAction()
 
 internal fun fullscreenActionHorizontalInsetForWidth(maxWidthDp: Float): Dp =
-    desktopPageHorizontalPaddingForWidth(maxWidthDp)
+    (maxWidthDp * 0.04f).dp.coerceIn(16.dp, 64.dp)
 
 @Composable
 internal fun FullscreenActionButton(

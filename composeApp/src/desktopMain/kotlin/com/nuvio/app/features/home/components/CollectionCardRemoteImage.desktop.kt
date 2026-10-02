@@ -216,12 +216,12 @@ private suspend fun decodeGifCodec(url: String): GifCodecHolder? {
 @Composable
 internal actual fun CollectionCardRemoteImage(
     imageUrl: String,
-    staticImageUrl: String?,
     contentDescription: String,
     modifier: Modifier,
     contentScale: ContentScale,
     animateIfPossible: Boolean,
 ) {
+    val staticImageUrl: String? = null
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val isHovered by hoverInteractionSource.collectIsHoveredAsState()
 

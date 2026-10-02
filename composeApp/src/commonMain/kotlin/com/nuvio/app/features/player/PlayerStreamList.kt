@@ -2,7 +2,6 @@ package com.nuvio.app.features.player
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,7 +10,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -20,14 +18,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.debrid.DebridSettingsRepository
-import com.nuvio.app.features.streams.LocalStreamSizeLabelFormat
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamCard
-import com.nuvio.app.features.streams.StreamCardSkeleton
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.streams.isSelectableForPlayback
-import com.nuvio.app.features.streams.rememberStreamSizeLabelFormat
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_no_streams_found
 import org.jetbrains.compose.resources.stringResource
@@ -60,14 +55,7 @@ internal fun PlayerStreamList(
 
     when {
         streams.isEmpty() && streamsUiState.isAnyLoading -> {
-            Column(
-                modifier = modifier.padding(contentPadding),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                repeat(4) {
-                    StreamCardSkeleton()
-                }
-            }
+            PlayerModalLoading(modifier = Modifier.padding(vertical = 24.dp))
         }
 
         streams.isEmpty() -> {
@@ -88,8 +76,6 @@ internal fun PlayerStreamList(
 
         else -> {
             val streamKeys = remember(streams) { streams.stablePlayerKeys() }
-            val formatStreamSize = rememberStreamSizeLabelFormat()
-            CompositionLocalProvider(LocalStreamSizeLabelFormat provides formatStreamSize) {
             LazyColumn(
                 modifier = modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -114,11 +100,38 @@ internal fun PlayerStreamList(
                 }
                 if (streamsUiState.isAnyLoading) {
                     item {
-                        StreamCardSkeleton()
+                        PlayerModalLoading(modifier = Modifier.padding(vertical = 16.dp))
                     }
                 }
             }
-            }
         }
     }
+}
+
+private fun List<StreamItem>.stablePlayerKeys(): List<String> {
+    val seen = mutableMapOf<String, Int>()
+    return mapIndexed { index, stream ->
+        val base = listOfNotNull(
+            stream.addonId,
+            stream.url,
+            stream.infoHash,
+            stream.fileIdx?.toString(),
+            stream.name,
+            stream.title,
+        ).joinToString(separator = ":").ifBlank { "stream-$index" }
+        val count = seen[base] ?: 0
+        seen[base] = count + 1
+        if (count == 0) base else "$base#$count"
+    }
+}
+
+private fun StreamItem.isCurrentPlayerStream(
+    currentStreamUrl: String?,
+    currentStreamName: String?,
+): Boolean {
+    val normalizedCurrentUrl = currentStreamUrl?.trim()?.takeIf { it.isNotEmpty() }
+    if (normalizedCurrentUrl != null && normalizedCurrentUrl == url?.trim()) return true
+    val normalizedCurrentName = currentStreamName?.trim()?.takeIf { it.isNotEmpty() }
+    return normalizedCurrentName != null &&
+        (normalizedCurrentName == name?.trim() || normalizedCurrentName == title?.trim())
 }

@@ -1,22 +1,34 @@
 package com.nuvio.app.features.trakt
 
 import com.nuvio.app.core.storage.DesktopStorage
-import com.nuvio.app.core.storage.ProfileScopedKey
+import com.nuvio.app.core.storage.DesktopPreferences
 import com.nuvio.app.core.sync.decodeSyncBoolean
 import com.nuvio.app.core.sync.encodeSyncBoolean
+import com.nuvio.app.core.storage.ProfileScopedKey
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 internal actual object TraktCommentsStorage {
-    private const val enabledKey = "trakt_comments_enabled"
-    private val store = DesktopStorage.store("nuvio_trakt_comments")
+    private const val preferencesName = "nuvio_trakt_comments"
+    private const val enabledKey = "comments_enabled"
+    private val syncKeys = listOf(enabledKey)
 
-    actual fun loadEnabled(): Boolean? =
-        store.getBoolean(ProfileScopedKey.of(enabledKey))
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
+
+    actual fun loadEnabled(): Boolean? {
+        val prefs = preferences ?: return null
+        val key = ProfileScopedKey.of(enabledKey)
+        return if (prefs.contains(key)) prefs.getBoolean(key, true) else null
+    }
 
     actual fun saveEnabled(enabled: Boolean) {
-        store.putBoolean(ProfileScopedKey.of(enabledKey), enabled)
+        preferences
+            ?.edit()
+            ?.putBoolean(ProfileScopedKey.of(enabledKey), enabled)
+            ?.apply()
     }
 
     actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
@@ -24,7 +36,10 @@ internal actual object TraktCommentsStorage {
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
-        store.remove(ProfileScopedKey.of(enabledKey))
+        preferences?.edit()?.apply {
+            syncKeys.forEach { remove(ProfileScopedKey.of(it)) }
+        }?.apply()
+
         payload.decodeSyncBoolean(enabledKey)?.let(::saveEnabled)
     }
 }

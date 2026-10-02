@@ -156,6 +156,35 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
             )
         }
 
+        outDir.resolve("com/nuvio/app/features/profiles").apply {
+            mkdirs()
+            resolve("GifSearchConfig.kt").writeText(
+                """
+                |package com.nuvio.app.features.profiles
+                |object GifSearchConfig {
+                |    const val PROVIDER = "${props.getProperty("GIF_SEARCH_PROVIDER", "")}" 
+                |    const val API_KEY = "${props.getProperty("GIF_SEARCH_API_KEY", "")}" 
+                |    const val SEARCH_ENDPOINT = "${props.getProperty("GIF_SEARCH_ENDPOINT", "")}" 
+                |}
+                """.trimMargin()
+            )
+        }
+
+        outDir.resolve("com/nuvio/app/features/anime").apply {
+            mkdirs()
+            resolve("AnimeTrackingConfig.kt").writeText(
+                """
+                |package com.nuvio.app.features.anime
+                |object AnimeTrackingConfig {
+                |    const val ANILIST_CLIENT_ID = "${props.getProperty("ANILIST_CLIENT_ID", "")}"
+                |    const val ANILIST_REDIRECT_URI = "${props.getProperty("ANILIST_REDIRECT_URI", "nuviospeedy://auth/anilist")}"
+                |    const val MAL_CLIENT_ID = "${props.getProperty("MAL_CLIENT_ID", "")}"
+                |    const val MAL_REDIRECT_URI = "${props.getProperty("MAL_REDIRECT_URI", "nuviospeedy://auth/mal")}"
+                |}
+                """.trimMargin()
+            )
+        }
+
         outDir.resolve("com/nuvio/app/features/mdblist").apply {
             mkdirs()
             resolve("MdbListConfig.kt").writeText(
@@ -529,7 +558,7 @@ val desktopReleaseVersionCode = (
     ?.toIntOrNull()
     ?: 1
 val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
-val windowsMsiUpgradeUuid = "395990ee-9b8a-3548-922c-e7a23a495b8d"
+val windowsMsiUpgradeUuid = "9a064d88-a3f8-4bb6-8f12-3ab738cb46ca"
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
         ?: System.getenv("NUVIO_IOS_DISTRIBUTION")
@@ -613,8 +642,8 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     appVersionCode.set(releaseAppVersionCode)
     desktopAppVersionName.set(desktopReleaseVersionName)
     desktopAppVersionCode.set(desktopReleaseVersionCode)
-    supabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
-    supabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
+    supabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL", fallback = "https://api.nuvio.tv"))
+    supabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY", fallback = "sb_publishable_1Clq8rlTVACkdcZuqr6_AD__xUUC_EN"))
     supabaseFallbackUrl.set(runtimeConfigValue("NUVIO_SUPABASE_FALLBACK_URL"))
     sentryDsn.set(runtimeConfigValue("SENTRY_DSN"))
     sentryDesktopDsn.set(runtimeConfigValue("SENTRY_DESKTOP_DSN"))
@@ -1184,6 +1213,199 @@ kotlin {
     
     sourceSets {
         val commonMain by getting {
+            dependencies { implementation("io.github.alexzhirkevich:compottie:2.1.0") }
+            // Compile the Speedy shell and retain the upstream desktop-specific
+            // platform contracts. All upstream sources remain available on disk.
+            kotlin.exclude(listOf(
+                "com/nuvio/app/core/ui/DesktopNavigationBar.kt",
+                "com/nuvio/app/AppScreenTab.kt",
+                "com/nuvio/app/core/network/ServerConfigurationStorage.kt",
+                "com/nuvio/app/features/downloads/DownloadSubtitles.kt",
+                "com/nuvio/app/features/mdblist/MdbListPlatform.kt",
+                "com/nuvio/app/features/shuffle/EpisodeShuffleRepository.kt",
+
+                "com/nuvio/app/AppGate.kt",
+                "com/nuvio/app/AppGateController.kt",
+                "com/nuvio/app/AppGateOverlay.kt",
+                "com/nuvio/app/AppNavigationSupport.kt",
+                "com/nuvio/app/AppShellComponents.kt",
+                "com/nuvio/app/CatalogDestination.kt",
+                "com/nuvio/app/DetailsDestinations.kt",
+                "com/nuvio/app/DownloadsDestinations.kt",
+                "com/nuvio/app/MainAppContent.kt",
+                "com/nuvio/app/MainTabsDestination.kt",
+                "com/nuvio/app/PlayerDestination.kt",
+                "com/nuvio/app/RootTabHost.kt",
+                "com/nuvio/app/SettingsDestinations.kt",
+                "com/nuvio/app/StreamDestination.kt",
+                "com/nuvio/app/StreamLoadingScreen.kt",
+                "com/nuvio/app/core/auth/DeviceLinkAuthRepository.kt",
+                "com/nuvio/app/core/i18n/MediaStatusLabel.kt",
+                "com/nuvio/app/core/network/BackendRateLimit.kt",
+                "com/nuvio/app/core/network/ServerConfiguration.kt",
+                "com/nuvio/app/core/network/ServerDiscovery.kt",
+                "com/nuvio/app/core/poster/CustomPosterFallbackInterceptor.kt",
+                "com/nuvio/app/core/poster/CustomPosterOverlay.kt",
+                "com/nuvio/app/core/poster/CustomPosterScreen.kt",
+                "com/nuvio/app/core/poster/CustomPosterUrlRepository.kt",
+                "com/nuvio/app/core/poster/CustomPosterUrlResolver.kt",
+                "com/nuvio/app/core/ui/CustomThemeColors.kt",
+                "com/nuvio/app/core/ui/CustomThemePalette.kt",
+                "com/nuvio/app/core/ui/Dialog.kt",
+                "com/nuvio/app/core/ui/DisintegrationRequest.kt",
+                "com/nuvio/app/core/ui/HsvColor.kt",
+                "com/nuvio/app/core/ui/JellyTabGestures.kt",
+                "com/nuvio/app/core/ui/Menu.kt",
+                "com/nuvio/app/core/ui/PageLayout.kt",
+                "com/nuvio/app/core/ui/PosterGridSizing.kt",
+                "com/nuvio/app/core/ui/PosterLift.kt",
+                "com/nuvio/app/core/ui/PosterOpenMotion.kt",
+                "com/nuvio/app/core/ui/ResponsiveLayout.kt",
+                "com/nuvio/app/core/ui/ScreenActivity.kt",
+                "com/nuvio/app/core/ui/Shimmer.kt",
+                "com/nuvio/app/core/ui/Skeleton.kt",
+                "com/nuvio/app/core/ui/jelly/JellyDrawing.kt",
+                "com/nuvio/app/core/ui/jelly/JellyMotion.kt",
+                "com/nuvio/app/core/ui/jelly/JellyNavigationBar.kt",
+                "com/nuvio/app/core/ui/jelly/JellySpring.kt",
+                "com/nuvio/app/core/ui/jelly/JellyTabs.kt",
+                "com/nuvio/app/features/addons/AddonHttpClient.kt",
+                "com/nuvio/app/features/auth/DeviceLinkAuthSection.kt",
+                "com/nuvio/app/features/auth/ServerConnectionController.kt",
+                "com/nuvio/app/features/auth/ServerConnectionDialogs.kt",
+                "com/nuvio/app/features/catalog/LibraryCatalogState.kt",
+                "com/nuvio/app/features/details/DetailsContentReveal.kt",
+                "com/nuvio/app/features/details/EpisodeRatingsVisibility.kt",
+                "com/nuvio/app/features/details/components/DesktopDetailHelpers.kt",
+                "com/nuvio/app/features/details/components/DesktopDetailHero.kt",
+                "com/nuvio/app/features/home/CachedNextUpRelease.kt",
+                "com/nuvio/app/features/home/HomeEpisodeShuffle.kt",
+                "com/nuvio/app/features/home/HomeScrollPosition.kt",
+                "com/nuvio/app/features/home/components/HomePosterHoverPreview.kt",
+                "com/nuvio/app/features/home/components/HomePosterHoverTrailer.kt",
+                "com/nuvio/app/features/library/LibraryDownloadsButton.kt",
+                "com/nuvio/app/features/library/LibraryListEditor.kt",
+                "com/nuvio/app/features/library/LibraryListManagementButton.kt",
+                "com/nuvio/app/features/library/LibraryListManagementController.kt",
+                "com/nuvio/app/features/library/LibraryListManagementDialog.kt",
+                "com/nuvio/app/features/library/LibraryListRows.kt",
+                "com/nuvio/app/features/library/LibraryProviderOrders.kt",
+                "com/nuvio/app/features/library/LibrarySortEffect.kt",
+                "com/nuvio/app/features/mdblist/MdbListAccountController.kt",
+                "com/nuvio/app/features/mdblist/MdbListApiClient.kt",
+                "com/nuvio/app/features/mdblist/MdbListAuthModels.kt",
+                "com/nuvio/app/features/mdblist/MdbListAuthRepository.kt",
+                "com/nuvio/app/features/mdblist/MdbListAuthStore.kt",
+                "com/nuvio/app/features/mdblist/MdbListHistoryPayload.kt",
+                "com/nuvio/app/features/mdblist/MdbListHistoryService.kt",
+                "com/nuvio/app/features/mdblist/MdbListHttpClient.kt",
+                "com/nuvio/app/features/mdblist/MdbListHttpModels.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryDecoder.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryModels.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryMutation.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryProjection.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryRemote.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryService.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibrarySorter.kt",
+                "com/nuvio/app/features/mdblist/MdbListLibraryWriter.kt",
+                "com/nuvio/app/features/mdblist/MdbListMediaIndex.kt",
+                "com/nuvio/app/features/mdblist/MdbListMessages.kt",
+                "com/nuvio/app/features/mdblist/MdbListMutationTarget.kt",
+                "com/nuvio/app/features/mdblist/MdbListNetworkEngine.kt",
+                "com/nuvio/app/features/mdblist/MdbListProgressProjection.kt",
+                "com/nuvio/app/features/mdblist/MdbListRatingsClient.kt",
+                "com/nuvio/app/features/mdblist/MdbListRatingsDecoder.kt",
+                "com/nuvio/app/features/mdblist/MdbListRatingsRepository.kt",
+                "com/nuvio/app/features/mdblist/MdbListResponseValues.kt",
+                "com/nuvio/app/features/mdblist/MdbListScrobbleReceipt.kt",
+                "com/nuvio/app/features/mdblist/MdbListScrobbleService.kt",
+                "com/nuvio/app/features/mdblist/MdbListSyncDecoders.kt",
+                "com/nuvio/app/features/mdblist/MdbListSyncEngine.kt",
+                "com/nuvio/app/features/mdblist/MdbListSyncModels.kt",
+                "com/nuvio/app/features/mdblist/MdbListSyncRemote.kt",
+                "com/nuvio/app/features/mdblist/MdbListSyncRepository.kt",
+                "com/nuvio/app/features/mdblist/MdbListSyncState.kt",
+                "com/nuvio/app/features/mdblist/MdbListTracker.kt",
+                "com/nuvio/app/features/mdblist/MdbListTrackingLibraryProvider.kt",
+                "com/nuvio/app/features/mdblist/MdbListTrackingProgressProvider.kt",
+                "com/nuvio/app/features/mdblist/MdbListTrackingWrites.kt",
+                "com/nuvio/app/features/mdblist/MdbListWatchedDecoder.kt",
+                "com/nuvio/app/features/mdblist/MdbListWatchedSyncAdapter.kt",
+                "com/nuvio/app/features/mdblist/MdbListWriteReconciliation.kt",
+                "com/nuvio/app/features/mdblist/RottenTomatoesRating.kt",
+                "com/nuvio/app/features/membership/MemberAccess.kt",
+                "com/nuvio/app/features/membership/MemberAccessRemoteDataSource.kt",
+                "com/nuvio/app/features/membership/MemberAccessRepository.kt",
+                "com/nuvio/app/features/membership/MembershipOverview.kt",
+                "com/nuvio/app/features/membership/MembershipOverviewRemoteDataSource.kt",
+                "com/nuvio/app/features/membership/MembershipOverviewRepository.kt",
+                "com/nuvio/app/features/membership/ProfileBackground.kt",
+                "com/nuvio/app/features/membership/ProfileBackgroundRepository.kt",
+                "com/nuvio/app/features/membership/ThemeAccess.kt",
+                "com/nuvio/app/features/player/AddonSubtitleLoader.kt",
+                "com/nuvio/app/features/player/ClickableIncludingFlingStop.kt",
+                "com/nuvio/app/features/player/ExternalPlaybackProgress.kt",
+                "com/nuvio/app/features/player/InfusePlayback.kt",
+                "com/nuvio/app/features/player/OpeningOverlay.kt",
+                "com/nuvio/app/features/player/PlayerBackReleaseGuard.kt",
+                "com/nuvio/app/features/player/PlayerControlActions.kt",
+                "com/nuvio/app/features/player/PlayerGestureOverlay.kt",
+                "com/nuvio/app/features/player/PlayerLoadingStatus.kt",
+                "com/nuvio/app/features/player/PlayerNextEpisodeStreamSelection.kt",
+                "com/nuvio/app/features/player/PlayerScreenRuntimeAudioPreferences.kt",
+                "com/nuvio/app/features/player/PlayerStartupSubtitles.kt",
+                "com/nuvio/app/features/player/PlayerTimeline.kt",
+                "com/nuvio/app/features/player/SubtitleSdhFilter.kt",
+                "com/nuvio/app/features/player/skip/AutoSkipSegmentType.kt",
+                "com/nuvio/app/features/player/skip/InternalSkipAction.kt",
+                "com/nuvio/app/features/player/skip/SimklIdResolver.kt",
+                "com/nuvio/app/features/player/skip/SkipIntervalLookup.kt",
+                "com/nuvio/app/features/profiles/AvatarPicker.kt",
+                "com/nuvio/app/features/profiles/ProfileBackgroundBackdrop.kt",
+                "com/nuvio/app/features/profiles/ProfileBackgroundPicker.kt",
+                "com/nuvio/app/features/profiles/ProfilePinEntry.kt",
+                "com/nuvio/app/features/profiles/ProfilePopupContent.kt",
+                "com/nuvio/app/features/profiles/ProfilePopupPositionProvider.kt",
+                "com/nuvio/app/features/settings/AppearanceThemePicker.kt",
+                "com/nuvio/app/features/settings/AutoSkipSegmentSelectionDialog.kt",
+                "com/nuvio/app/features/settings/CustomThemeEditor.kt",
+                "com/nuvio/app/features/settings/CustomThemePreview.kt",
+                "com/nuvio/app/features/settings/DesktopNavigationLayout.kt",
+                "com/nuvio/app/features/settings/HoverPreviewSettingsPage.kt",
+                "com/nuvio/app/features/settings/MdbListProviderCard.kt",
+                "com/nuvio/app/features/settings/NavigationBarPreview.kt",
+                "com/nuvio/app/features/settings/NavigationBarSettingsSheet.kt",
+                "com/nuvio/app/features/settings/RatingsSettings.kt",
+                "com/nuvio/app/features/settings/SettingsAttribution.kt",
+                "com/nuvio/app/features/settings/SupporterMembershipCard.kt",
+                "com/nuvio/app/features/settings/ThemeColorPicker.kt",
+                "com/nuvio/app/features/settings/UpdateChannelSettings.kt",
+                "com/nuvio/app/features/shuffle/EpisodeShuffle.kt",
+                "com/nuvio/app/features/shuffle/EpisodeShuffleSheet.kt",
+                "com/nuvio/app/features/shuffle/RandomEpisodePicker.kt",
+                "com/nuvio/app/features/shuffle/ShuffleBadge.kt",
+                "com/nuvio/app/features/shuffle/ShuffleEpisodeState.kt",
+                "com/nuvio/app/features/simkl/SimklPinAuthorization.kt",
+                "com/nuvio/app/features/simkl/SimklPlaybackMerge.kt",
+                "com/nuvio/app/features/simkl/SimklRelatedRepository.kt",
+                "com/nuvio/app/features/streams/BadgeImageLoader.kt",
+                "com/nuvio/app/features/streams/PlaybackAvailability.kt",
+                "com/nuvio/app/features/streams/ProviderFilterRow.kt",
+                "com/nuvio/app/features/streams/StreamAutoPlayLoadingPolicy.kt",
+                "com/nuvio/app/features/tmdb/TmdbAgeRatings.kt",
+                "com/nuvio/app/features/tmdb/TmdbImageUrls.kt",
+                "com/nuvio/app/features/tmdb/TmdbImages.kt",
+                "com/nuvio/app/features/tracking/TrackingLibrarySorter.kt",
+                "com/nuvio/app/features/tracking/TrackingListManager.kt",
+                "com/nuvio/app/features/tracking/TrackingRefreshGate.kt",
+                "com/nuvio/app/features/trailer/TrailerPlaybackState.kt",
+                "com/nuvio/app/features/trailer/TrailerPlayer.kt",
+                "com/nuvio/app/features/trailer/TrailerPlayerControls.kt",
+                "com/nuvio/app/navigation/PosterNavigationArtwork.kt",
+                "com/nuvio/app/navigation/PosterNavigationMotion.kt",
+                "com/nuvio/app/navigation/PosterNavigationState.kt",
+                "com/nuvio/app/navigation/PosterNavigationTransition.kt",
+            ))
             kotlin.srcDir(generatedRuntimeConfigDir)
         }
         androidMain {
@@ -1225,6 +1447,9 @@ kotlin {
             }
         }
         val desktopMain by getting {
+            kotlin.exclude("com/nuvio/app/core/network/ServerConfigurationStorage.desktop.kt", "com/nuvio/app/features/mdblist/MdbListAuthPersistence.desktop.kt", "com/nuvio/app/features/shuffle/EpisodeShuffleStorage.desktop.kt")
+            dependencies { implementation("org.tukaani:xz:1.10") }
+            kotlin.srcDir(fullCommonSourceDir.resolve("com/nuvio/app/features/cloudstream"))
             kotlin.srcDir(fullPluginSourceDir)
             kotlin.srcDir(fullTrailerSourceDir)
             kotlin.srcDir(
@@ -1243,6 +1468,7 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.ktor.client.cio)
                 implementation("com.squareup.okhttp3:okhttp:4.12.0")
+                implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
                 implementation(libs.quickjs.kt)
                 implementation(libs.ksoup)
                 implementation(libs.sentry.jvm)
@@ -1335,10 +1561,10 @@ compose.desktop {
         )
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
-            packageName = "Nuvio"
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
+            packageName = "Nuvio Speedy"
             packageVersion = desktopReleasePackageVersion
-            vendor = "Nuvio Media"
+            vendor = "raphdespeed"
             if (isMacHost) {
                 appResourcesRootDir.set(macosPlayerAppResourcesRoot)
             }
@@ -1392,7 +1618,7 @@ compose.desktop {
                 upgradeUuid = windowsMsiUpgradeUuid
                 shortcut = true
                 menu = true
-                menuGroup = "Nuvio"
+                menuGroup = "Nuvio Speedy"
             }
             linux {
                 iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon-transparent.png"))

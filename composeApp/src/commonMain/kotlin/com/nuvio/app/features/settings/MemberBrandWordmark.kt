@@ -1,23 +1,19 @@
 package com.nuvio.app.features.settings
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import com.nuvio.app.core.ui.LocalScreenActive
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,171 +24,113 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nuvio.app.features.membership.MemberAccessRepository
-import com.nuvio.app.features.membership.MemberTier
+import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.core.ui.ThemeColors
+import com.nuvio.app.core.ui.appTheme
+import com.nuvio.app.core.ui.currentAnimatedThemeVisuals
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.nuvio_speedy_supporter
+import org.jetbrains.compose.resources.stringResource
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-private const val MemberWordmarkHeightRatio = 132f / 344f
-private const val MemberWordmarkVerticalOffsetRatio = -12f / 344f
-internal const val MemberBadgeGradientAngleDegrees = 100f
-internal const val MemberBadgeGradientWidthMultiplier = 2.4f
-internal const val MemberBadgeSweepHalfDurationMs = 2_750
-
-internal data class MemberBadgeStyle(
-    val label: String,
-    val colorStops: List<Pair<Float, Color>>,
-)
-
-internal fun MemberTier.badgeStyle(): MemberBadgeStyle = when (this) {
-    MemberTier.SUPPORTER -> MemberBadgeStyle(
-        label = "Supporter",
-        colorStops = listOf(
-            0f to Color(0xFFD4843D),
-            0.5f to Color(0xFFFFDE90),
-            1f to Color(0xFFD4843D),
-        ),
-    )
-
-    MemberTier.SUPPORTER_PLUS -> MemberBadgeStyle(
-        label = "Supporter+",
-        colorStops = listOf(
-            0f to Color(0xFF91A8FF),
-            0.52f to Color(0xFFF08BD8),
-            0.78f to Color(0xFFFF9B8E),
-            1f to Color(0xFF91A8FF),
-        ),
-    )
-}
+private const val BadgeHeightRatio = 132f / 344f
+private const val BadgeVerticalOffsetRatio = -12f / 344f
+private const val BadgeGradientWidthMultiplier = 2.4f
+private const val BadgeSweepHalfDurationMs = 2_750
 
 @Composable
 internal fun MemberBrandWordmark(
     height: Dp,
     modifier: Modifier = Modifier,
-    contentDescription: String? = null,
 ) {
-    val access by remember {
-        MemberAccessRepository.ensureStarted()
-        MemberAccessRepository.access
-    }.collectAsStateWithLifecycle()
+    val fullLabel = stringResource(Res.string.nuvio_speedy_supporter)
+    var badgeSize by remember { mutableStateOf(IntSize.Zero) }
+    val appTheme = MaterialTheme.appTheme
+    val animatedThemeColors = currentAnimatedThemeVisuals?.colors
+    val badgeColors = remember(appTheme, animatedThemeColors) {
+        memberBrandWordmarkColors(appTheme, animatedThemeColors)
+    }
+    val transition = rememberInfiniteTransition(label = "speedySupporterGradient")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = BadgeSweepHalfDurationMs,
+                easing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f),
+            ),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "speedySupporterGradientProgress",
+    )
+    val brush = remember(badgeSize, progress, badgeColors) {
+        speedySupporterBrush(badgeSize, progress, badgeColors)
+    }
 
     Row(
-        modifier = modifier.height(height),
+        modifier = modifier
+            .height(height)
+            .semantics(mergeDescendants = true) { contentDescription = fullLabel },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppBrandWordmark(
-            modifier = Modifier.height(height),
-            contentDescription = contentDescription,
-        )
-        val tier = access.tier
-        AnimatedVisibility(
-            visible = tier != null,
-            enter = fadeIn(tween(360)) +
-                expandHorizontally(tween(420), expandFrom = Alignment.Start) +
-                scaleIn(tween(420), initialScale = 0.94f),
-        ) {
-            if (tier != null) {
-                MemberBadge(
-                    tier = tier,
-                    height = height,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MemberBadge(
-    tier: MemberTier,
-    height: Dp,
-) {
-    val badgeStyle = remember(tier) { tier.badgeStyle() }
-    var badgeSize by remember(tier) { mutableStateOf(IntSize.Zero) }
-    val gradientBrush = rememberMemberBadgeGradientBrush(
-        style = badgeStyle,
-        size = badgeSize,
-    )
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
+        AppBrandWordmark(modifier = Modifier.height(height))
         Spacer(modifier = Modifier.width(height * 0.14f))
         Text(
-            text = badgeStyle.label,
+            text = "Speedy Supporter",
             style = TextStyle(
-                brush = gradientBrush,
-                fontSize = (height.value * MemberWordmarkHeightRatio).sp,
+                brush = brush,
+                fontSize = (height.value * BadgeHeightRatio).sp,
                 fontWeight = FontWeight.SemiBold,
             ),
             modifier = Modifier
-                .offset(y = height * MemberWordmarkVerticalOffsetRatio)
+                .offset(y = height * BadgeVerticalOffsetRatio)
                 .onSizeChanged { badgeSize = it },
         )
     }
 }
 
-@Composable
-internal fun rememberMemberBadgeGradientBrush(
-    style: MemberBadgeStyle,
-    size: IntSize,
-): Brush {
-    val gradientProgress = if (LocalScreenActive.current) {
-        val gradientTransition = rememberInfiniteTransition(label = "memberBadgeGradient")
-        val progress by gradientTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(
-                    durationMillis = MemberBadgeSweepHalfDurationMs,
-                    easing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f),
-                ),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "memberBadgeGradientProgress",
-        )
-        progress
-    } else {
-        0f
-    }
-    return remember(style, size, gradientProgress) {
-        memberBadgeGradientBrush(
-            style = style,
-            size = size,
-            progress = gradientProgress,
-        )
-    }
+internal fun memberBrandWordmarkColors(
+    theme: AppTheme,
+    animatedThemeColors: List<Color>? = null,
+): List<Color> {
+    val palette = ThemeColors.getColorPalette(theme)
+    val themeColors = animatedThemeColors
+        ?.takeIf { it.size >= 2 }
+        ?: palette.accentGradient.takeIf { it.size >= 2 }
+        ?: listOf(palette.secondaryVariant, palette.secondary, palette.focusRing)
+    return themeColors + themeColors.first()
 }
 
-private fun memberBadgeGradientBrush(
-    style: MemberBadgeStyle,
+private fun speedySupporterBrush(
     size: IntSize,
     progress: Float,
+    colors: List<Color>,
 ): Brush {
     val textWidth = size.width.toFloat().coerceAtLeast(1f)
     val textHeight = size.height.toFloat().coerceAtLeast(1f)
-    val gradientWidth = textWidth * MemberBadgeGradientWidthMultiplier
+    val gradientWidth = textWidth * BadgeGradientWidthMultiplier
     val gradientLeft = -(gradientWidth - textWidth) * progress.coerceIn(0f, 1f)
-    val angleRadians = MemberBadgeGradientAngleDegrees * (PI.toFloat() / 180f)
+    val angleRadians = 100f * (PI.toFloat() / 180f)
     val directionX = sin(angleRadians)
     val directionY = -cos(angleRadians)
-    val gradientLineLength = abs(gradientWidth * directionX) + abs(textHeight * directionY)
-    val center = Offset(
-        x = gradientLeft + gradientWidth / 2f,
-        y = textHeight / 2f,
-    )
-    val halfVector = Offset(
-        x = directionX * gradientLineLength / 2f,
-        y = directionY * gradientLineLength / 2f,
-    )
+    val lineLength = abs(gradientWidth * directionX) + abs(textHeight * directionY)
+    val center = Offset(gradientLeft + gradientWidth / 2f, textHeight / 2f)
+    val halfVector = Offset(directionX * lineLength / 2f, directionY * lineLength / 2f)
 
     return Brush.linearGradient(
-        colorStops = style.colorStops.toTypedArray(),
+        colorStops = colors.mapIndexed { index, color ->
+            index.toFloat() / colors.lastIndex.coerceAtLeast(1).toFloat() to color
+        }.toTypedArray(),
         start = center - halfVector,
         end = center + halfVector,
     )

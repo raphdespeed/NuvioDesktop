@@ -21,15 +21,12 @@ enum class SimklAuthError {
 data class SimklAuthUiState(
     val mode: SimklConnectionMode = SimklConnectionMode.DISCONNECTED,
     val credentialsConfigured: Boolean = false,
+    val manualClientId: String = "",
     val isLoading: Boolean = false,
     val username: String? = null,
     val accountId: Long? = null,
     val tokenExpiresAtEpochMs: Long? = null,
     val pendingAuthorizationStartedAtEpochMs: Long? = null,
-    val usesPinFlow: Boolean = false,
-    val pendingPinUserCode: String? = null,
-    val pendingPinVerificationUrl: String? = null,
-    val pendingPinExpiresAtEpochMs: Long? = null,
     val error: SimklAuthError? = null,
 )
 
@@ -42,19 +39,9 @@ internal data class SimklStoredAuthState(
     val tokenExpiresAtEpochMs: Long? = null,
     val pendingAuthorizationState: String? = null,
     val pendingAuthorizationStartedAtEpochMs: Long? = null,
-    val pendingPinUserCode: String? = null,
-    val pendingPinVerificationUrl: String? = null,
-    val pendingPinIntervalSeconds: Int? = null,
-    val pendingPinExpiresAtEpochMs: Long? = null,
 ) {
-    val hasPendingPinAuthorization: Boolean
-        get() = !pendingPinUserCode.isNullOrBlank() &&
-            !pendingPinVerificationUrl.isNullOrBlank() &&
-            pendingPinIntervalSeconds != null &&
-            pendingPinExpiresAtEpochMs != null
-
     val hasPendingAuthorization: Boolean
-        get() = !pendingAuthorizationState.isNullOrBlank() || hasPendingPinAuthorization
+        get() = !pendingAuthorizationState.isNullOrBlank()
 }
 
 internal enum class SimklSettingsRefreshAction {

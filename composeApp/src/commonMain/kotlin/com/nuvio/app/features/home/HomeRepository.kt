@@ -4,21 +4,23 @@ import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.catalog.CatalogTarget
-import com.nuvio.app.features.catalog.CatalogPage
 import com.nuvio.app.features.catalog.fetchCatalogPage
-import com.nuvio.app.features.catalog.mergeCatalogItems
-import com.nuvio.app.core.poster.CustomPosterUrlRepository
-import com.nuvio.app.core.poster.reapplyCustomPosterUrls
-import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.collection.Collection
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.collection.CollectionSource
 import com.nuvio.app.features.collection.TmdbCollectionSourceResolver
 import com.nuvio.app.features.collection.catalogRouteKey
 import com.nuvio.app.features.collection.findCollectionCatalog
+import com.nuvio.app.features.cloudstream.CloudStreamPluginItem
+import com.nuvio.app.features.cloudstream.CloudStreamRepository
+import com.nuvio.app.features.cloudstream.toMetaPreview
+import com.nuvio.app.features.tmdb.TmdbMetadataService
+import com.nuvio.app.features.tmdb.TmdbSettings
+import com.nuvio.app.features.tmdb.TmdbSettingsRepository
+import com.nuvio.app.features.tmdb.normalizeTmdbLanguage
 import com.nuvio.app.features.trakt.TraktPublicListSourceResolver
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
-import com.nuvio.app.isDesktop
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,8 +32,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.absoluteValue
 import kotlin.random.Random
+
+private data class CloudHomeSectionsResult(
+    val sections: List<HomeCatalogSection>,
+    val errorMessage: String?,
+)
 
 object HomeRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -40,32 +48,58 @@ object HomeRepository {
 
     private var activeJob: Job? = null
     private var activeRequestKey: String? = null
-    private var currentRequestKey: String? = null
+    private var completedRequestKey: String? = null
     private var currentDefinitions: List<HomeCatalogDefinition> = emptyList()
     private var cachedSections: Map<String, HomeCatalogSection> = emptyMap()
+    private var cachedCloudSections: List<HomeCatalogSection> = emptyList()
     private var cachedCollectionHeroItems: List<MetaPreview> = emptyList()
+    private val localizedHeroArtworkCache = mutableMapOf<String, MetaPreview>()
+    private var localizedHeroArtworkJob: Job? = null
+    private var localizedHeroArtworkRequestKey: String? = null
     private var collectionHeroJob: Job? = null
     private var collectionHeroRequestKey: String? = null
     private var lastPublishedCatalogHeroEmpty: Boolean = true
     private var lastErrorMessage: String? = null
 
     fun refresh(addons: List<ManagedAddon>, force: Boolean = false) {
+        CloudStreamRepository.initialize()
+        val cloudState = CloudStreamRepository.uiState.value
+        val cloudPlugins = cloudState.plugins.filter(CloudStreamPluginItem::isRunnable)
         val activeAddons = addons.enabledAddons()
         val requests = buildHomeCatalogDefinitions(activeAddons)
         currentDefinitions = requests
         val requestCacheKeys = requests.mapTo(mutableSetOf(), HomeCatalogDefinition::cacheKey)
         cachedSections = cachedSections.filterKeys(requestCacheKeys::contains)
-        val requestKey = requests.joinToString(separator = "|", transform = HomeCatalogDefinition::cacheKey)
-        currentRequestKey = requestKey
+        val requestKey = buildString {
+            append(requests.joinToString(separator = "|", transform = HomeCatalogDefinition::cacheKey))
+            append("|cloudstream=")
+            append(cloudState.registryRevision)
+            append(':')
+            append(cloudPlugins.joinToString(separator = ",") { it.metadata.id.value })
+        }
 
         if (!force && activeRequestKey == requestKey && _uiState.value.isLoading) return
+
+        if (
+            !force &&
+            requestKey == completedRequestKey &&
+            requestCacheKeys.all(cachedSections::containsKey) &&
+            (requestCacheKeys.any(::hasRenderableCachedSection) || cachedCloudSections.any { it.items.isNotEmpty() })
+        ) {
+            if (_uiState.value.sections.isEmpty() || _uiState.value.heroItems.isEmpty()) {
+                applyCurrentSettings()
+            }
+            return
+        }
         activeRequestKey = requestKey
 
-        if (requests.isEmpty()) {
+        if (requests.isEmpty() && cloudPlugins.isEmpty()) {
             activeJob?.cancel()
             activeJob = null
             activeRequestKey = null
+            completedRequestKey = requestKey
             cachedSections = emptyMap()
+            cachedCloudSections = emptyList()
             lastErrorMessage = null
             publishCurrentState(
                 isLoading = false,
@@ -73,8 +107,7 @@ object HomeRepository {
             )
             ensureCollectionHeroFallback(
                 addons = activeAddons,
-                forceRefresh = force,
-                refreshSources = true,
+                force = force,
                 requestKey = requestKey,
             )
             return
@@ -83,22 +116,40 @@ object HomeRepository {
         activeJob?.cancel()
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         activeJob = scope.launch {
+            val cloudResult = loadCloudSections(cloudPlugins)
+            if (activeRequestKey != requestKey) return@launch
+            cachedCloudSections = cloudResult.sections
             val prioritizedRequests = prioritizeDefinitions(
                 definitions = requests,
                 snapshot = HomeCatalogSettingsRepository.snapshot(),
             )
+            val pendingRequests = prioritizedRequests.filter { definition ->
+                force || cachedSections[definition.cacheKey] == null
+            }
+            if (pendingRequests.isEmpty()) {
+                lastErrorMessage = cloudResult.errorMessage
+                completedRequestKey = requestKey.takeIf { cachedCloudSections.isNotEmpty() || cachedSections.isNotEmpty() }
+                activeRequestKey = null
+                publishCurrentState(
+                    isLoading = false,
+                    requestKey = requestKey,
+                )
+                return@launch
+            }
             val loadedSections = linkedMapOf<String, HomeCatalogSection>().apply {
                 putAll(cachedSections)
             }
-            var firstErrorMessage: String? = null
+            var firstErrorMessage: String? = cloudResult.errorMessage
             var batchIndex = 0
 
-            prioritizedRequests.chunked(HOME_CATALOG_FETCH_BATCH_SIZE).forEach { batch ->
+            pendingRequests.chunked(HOME_CATALOG_FETCH_BATCH_SIZE).forEach { batch ->
                 if (activeRequestKey != requestKey) return@launch
                 val results = batch.map { request ->
                     async {
                         request to runCatching {
-                            request.toSection(forceRefresh = force)
+                            withTimeoutOrNull(HOME_CATALOG_REQUEST_TIMEOUT_MS) {
+                                request.toSection()
+                            } ?: error("${request.defaultTitle} timed out")
                         }
                     }
                 }.awaitAll()
@@ -130,6 +181,9 @@ object HomeRepository {
 
             cachedSections = loadedSections.toMap()
             lastErrorMessage = firstErrorMessage
+            if (cachedSections.values.any { section -> section.items.isNotEmpty() } || cachedCloudSections.isNotEmpty()) {
+                completedRequestKey = requestKey
+            }
             activeRequestKey = null
             publishCurrentState(
                 isLoading = false,
@@ -137,8 +191,7 @@ object HomeRepository {
             )
             ensureCollectionHeroFallback(
                 addons = activeAddons,
-                forceRefresh = force,
-                refreshSources = true,
+                force = force,
                 requestKey = requestKey,
             )
         }
@@ -147,13 +200,12 @@ object HomeRepository {
     fun applyCurrentSettings() {
         publishCurrentState(
             isLoading = _uiState.value.isLoading,
-            requestKey = currentRequestKey,
+            requestKey = activeRequestKey ?: completedRequestKey,
         )
         ensureCollectionHeroFallback(
             addons = AddonRepository.uiState.value.addons.enabledAddons(),
-            forceRefresh = false,
-            refreshSources = false,
-            requestKey = currentRequestKey,
+            force = false,
+            requestKey = activeRequestKey ?: completedRequestKey,
         )
     }
 
@@ -161,10 +213,15 @@ object HomeRepository {
         activeJob?.cancel()
         activeJob = null
         activeRequestKey = null
-        currentRequestKey = null
+        completedRequestKey = null
         currentDefinitions = emptyList()
         cachedSections = emptyMap()
+        cachedCloudSections = emptyList()
         cachedCollectionHeroItems = emptyList()
+        localizedHeroArtworkCache.clear()
+        localizedHeroArtworkJob?.cancel()
+        localizedHeroArtworkJob = null
+        localizedHeroArtworkRequestKey = null
         collectionHeroJob?.cancel()
         collectionHeroJob = null
         collectionHeroRequestKey = null
@@ -173,6 +230,9 @@ object HomeRepository {
         _uiState.value = HomeUiState()
     }
 
+    private fun hasRenderableCachedSection(cacheKey: String): Boolean =
+        cachedSections[cacheKey]?.items?.isNotEmpty() == true
+
     private fun publishCurrentState(
         isLoading: Boolean,
         requestKey: String?,
@@ -180,12 +240,8 @@ object HomeRepository {
         val snapshot = HomeCatalogSettingsRepository.snapshot()
         val preferences = snapshot.preferences
         val todayIsoDate = if (snapshot.hideUnreleasedContent) CurrentDateProvider.todayIsoDate() else null
-        CustomPosterUrlRepository.ensureLoaded()
-        val posterPattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.HOME)
         fun HomeCatalogSection.withReleaseFilter(): HomeCatalogSection =
             if (todayIsoDate == null) this else filterReleasedItems(todayIsoDate)
-        fun HomeCatalogSection.withPosterOverlay(): HomeCatalogSection =
-            copy(items = items.reapplyCustomPosterUrls(posterPattern))
 
         val sections = currentDefinitions
             .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
@@ -193,24 +249,21 @@ object HomeRepository {
                 val preference = preferences[definition.key]
                 if (preference?.enabled == false) return@mapNotNull null
 
-                val section = cachedSections[definition.cacheKey]
-                    ?.withPosterOverlay()
-                    ?.withReleaseFilter()
-                    ?: return@mapNotNull null
+                val section = cachedSections[definition.cacheKey]?.withReleaseFilter() ?: return@mapNotNull null
                 if (section.items.isEmpty()) return@mapNotNull null
                 val customTitle = preference?.customTitle.orEmpty()
                 section.copy(
                     title = customTitle.ifBlank { definition.titleFor(snapshot.showCatalogType) },
                 )
-            }
+            } + cachedCloudSections
 
         val catalogHeroItems = if (snapshot.heroEnabled) {
             val heroRandom = Random((requestKey?.hashCode() ?: 0).absoluteValue + 1)
-            currentDefinitions
+            (currentDefinitions
                 .filter { definition -> preferences[definition.key]?.heroSourceEnabled != false }
                 .mapNotNull { definition -> cachedSections[definition.cacheKey] }
-                .map { section -> section.withPosterOverlay().withReleaseFilter() }
-                .flatMap { section -> section.items }
+                .map { section -> section.withReleaseFilter() }
+                .flatMap { section -> section.items })
                 .distinctBy { item -> "${item.type}:${item.id}" }
                 .shuffled(heroRandom)
                 .take(HOME_HERO_ITEM_LIMIT)
@@ -218,36 +271,133 @@ object HomeRepository {
             emptyList()
         }
         lastPublishedCatalogHeroEmpty = snapshot.heroEnabled && catalogHeroItems.isEmpty()
-        val heroItems = if (snapshot.heroEnabled) {
+        val resolvedHeroItems = if (snapshot.heroEnabled) {
             catalogHeroItems.ifEmpty { cachedCollectionHeroItems }
         } else {
             emptyList()
         }
+        val heroItems = when {
+            !snapshot.heroEnabled -> emptyList()
+            else -> resolveLocalizedHeroArtwork(
+                items = resolvedHeroItems,
+                requestKey = requestKey,
+            )
+        }
 
-        val nextState = HomeUiState(
+        _uiState.value = HomeUiState(
             isLoading = isLoading,
             heroItems = heroItems,
             sections = sections,
             errorMessage = if (sections.isEmpty()) lastErrorMessage else null,
         )
-        if (_uiState.value != nextState) _uiState.value = nextState
     }
 
-    private suspend fun HomeCatalogDefinition.toSection(forceRefresh: Boolean): HomeCatalogSection {
-        CustomPosterUrlRepository.ensureLoaded()
-        val pattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.HOME)
-        val page = if (isDesktop) {
-            fetchDesktopHomePreview(forceRefresh)
-        } else {
-            fetchCatalogPage(
-                manifestUrl = manifestUrl,
-                type = type,
-                catalogId = catalogId,
-                maxItems = HOME_CATALOG_PREVIEW_FETCH_LIMIT,
-                forceRefresh = forceRefresh,
+    private fun resolveLocalizedHeroArtwork(
+        items: List<MetaPreview>,
+        requestKey: String?,
+    ): List<MetaPreview> {
+        if (items.isEmpty()) return emptyList()
+        val settings = TmdbSettingsRepository.snapshot()
+        if (!settings.shouldLocalizeHeroArtwork()) return items
+
+        val localizedItems = items.mapNotNull { item ->
+            localizedHeroArtworkCache[localizedHeroArtworkCacheKey(item, settings)]
+        }
+        val missingItems = items.filterNot { item ->
+            localizedHeroArtworkCache.containsKey(localizedHeroArtworkCacheKey(item, settings))
+        }
+        if (missingItems.isNotEmpty()) {
+            ensureLocalizedHeroArtwork(
+                items = items,
+                settings = settings,
+                requestKey = requestKey,
             )
         }
-        val items = if (pattern.isNotBlank()) page.items.withCustomPosterUrls(pattern) else page.items
+        return localizedItems
+    }
+
+    private fun ensureLocalizedHeroArtwork(
+        items: List<MetaPreview>,
+        settings: TmdbSettings,
+        requestKey: String?,
+    ) {
+        val normalizedLanguage = normalizeTmdbLanguage(settings.language)
+        val nextRequestKey = buildString {
+            append(requestKey.orEmpty())
+            append("|tmdbHeroArtwork=")
+            append(normalizedLanguage)
+            append("|items=")
+            items.forEach { item ->
+                append(item.stableKey())
+                append(';')
+            }
+        }
+        if (localizedHeroArtworkRequestKey == nextRequestKey) return
+
+        localizedHeroArtworkJob?.cancel()
+        localizedHeroArtworkRequestKey = nextRequestKey
+        localizedHeroArtworkJob = scope.launch {
+            val distinctItems = items.distinctBy(MetaPreview::stableKey)
+            distinctItems
+                .chunked(HOME_HERO_LOCALIZED_ARTWORK_BATCH_SIZE)
+                .forEachIndexed { batchIndex, batch ->
+                    if (localizedHeroArtworkRequestKey != nextRequestKey) return@launch
+                    val timeoutMs = if (batchIndex == 0) {
+                        HOME_HERO_INITIAL_LOCALIZED_ARTWORK_TIMEOUT_MS
+                    } else {
+                        HOME_HERO_LOCALIZED_ARTWORK_TIMEOUT_MS
+                    }
+                    val results = batch.map { item ->
+                        async {
+                            val localized = try {
+                                withTimeoutOrNull(timeoutMs) {
+                                    TmdbMetadataService.localizePreviewArtwork(
+                                        item = item,
+                                        settings = settings,
+                                    )
+                                }
+                            } catch (error: Throwable) {
+                                if (error is CancellationException) throw error
+                                null
+                            }
+                            localizedHeroArtworkCacheKey(item, settings) to (localized ?: item)
+                        }
+                    }.awaitAll()
+
+                    if (localizedHeroArtworkRequestKey != nextRequestKey) return@launch
+                    results.forEach { (cacheKey, item) ->
+                        localizedHeroArtworkCache[cacheKey] = item
+                    }
+                    publishCurrentState(
+                        isLoading = _uiState.value.isLoading,
+                        requestKey = requestKey,
+                    )
+                }
+            if (localizedHeroArtworkRequestKey != nextRequestKey) {
+                return@launch
+            }
+            localizedHeroArtworkRequestKey = null
+            publishCurrentState(
+                isLoading = _uiState.value.isLoading,
+                requestKey = requestKey,
+            )
+        }
+    }
+
+    private fun TmdbSettings.shouldLocalizeHeroArtwork(): Boolean =
+        enabled && hasApiKey && useArtwork
+
+    private fun localizedHeroArtworkCacheKey(item: MetaPreview, settings: TmdbSettings): String =
+        "${item.stableKey()}:${normalizeTmdbLanguage(settings.language)}"
+
+    private suspend fun HomeCatalogDefinition.toSection(): HomeCatalogSection {
+        val page = fetchCatalogPage(
+            manifestUrl = manifestUrl,
+            type = type,
+            catalogId = catalogId,
+            maxItems = HOME_CATALOG_PREVIEW_FETCH_LIMIT,
+        )
+        val items = page.items
         if (items.isEmpty()) {
             return HomeCatalogSection(
                 key = key,
@@ -283,39 +433,56 @@ object HomeRepository {
         )
     }
 
-    private suspend fun HomeCatalogDefinition.fetchDesktopHomePreview(forceRefresh: Boolean): CatalogPage {
-        var items = emptyList<MetaPreview>()
-        var rawItemCount = 0
-        var nextSkip: Int? = null
-        var pagesFetched = 0
-        do {
-            val page = fetchCatalogPage(
-                manifestUrl = manifestUrl,
-                type = type,
-                catalogId = catalogId,
-                skip = nextSkip,
-                maxItems = DESKTOP_HOME_CATALOG_PREVIEW_FETCH_LIMIT - items.size,
-                forceRefresh = forceRefresh,
-            )
-            items = mergeCatalogItems(items, page.items)
-            rawItemCount += page.rawItemCount
-            nextSkip = page.nextSkip
-            pagesFetched++
-        } while (
-            supportsPagination && nextSkip != null && items.size < DESKTOP_HOME_CATALOG_PREVIEW_FETCH_LIMIT &&
-            pagesFetched < DESKTOP_HOME_CATALOG_PREVIEW_MAX_PAGES
-        )
-        return CatalogPage(
-            items = items.take(DESKTOP_HOME_CATALOG_PREVIEW_FETCH_LIMIT),
-            rawItemCount = rawItemCount,
-            nextSkip = nextSkip,
-        )
+    private suspend fun loadCloudSections(
+        plugins: List<CloudStreamPluginItem>,
+    ): CloudHomeSectionsResult {
+        val sections = mutableListOf<HomeCatalogSection>()
+        var firstError: String? = null
+        withTimeoutOrNull(HOME_CLOUDSTREAM_TOTAL_PREVIEW_TIMEOUT_MS) {
+            for (plugin in plugins.take(HOME_CLOUDSTREAM_PROVIDER_SCAN_LIMIT)) {
+                if (sections.size >= HOME_CLOUDSTREAM_SECTION_PREVIEW_LIMIT) break
+                val result = withTimeoutOrNull(HOME_CLOUDSTREAM_PROVIDER_TIMEOUT_MS) {
+                    CloudStreamRepository.getMainPage(plugin.metadata.id.value, page = 1)
+                }
+                if (result == null) {
+                    if (firstError == null) firstError = "${plugin.metadata.name} zaman aşımına uğradı"
+                    continue
+                }
+                result.fold(
+                    onSuccess = { categories ->
+                        categories.forEach { (categoryName, items) ->
+                            if (sections.size >= HOME_CLOUDSTREAM_SECTION_PREVIEW_LIMIT) return@forEach
+                            if (items.isEmpty()) return@forEach
+                            val previews = items.take(HOME_CATALOG_PREVIEW_FETCH_LIMIT).map { it.toMetaPreview() }
+                            sections += HomeCatalogSection(
+                                key = "cloudstream:${plugin.metadata.id.storageKey}:${categoryName.hashCode()}",
+                                title = categoryName,
+                                subtitle = "${plugin.metadata.name} · CloudStream",
+                                addonName = plugin.metadata.name,
+                                target = CatalogTarget.CloudStream(
+                                    providerId = plugin.metadata.id.value,
+                                    categoryName = categoryName,
+                                    contentType = items.first().type.nuvioType,
+                                    supportsPagination = false,
+                                ),
+                                items = previews,
+                                availableItemCount = items.size,
+                                hasMore = items.size > previews.size,
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        if (firstError == null) firstError = error.message
+                    },
+                )
+            }
+        }
+        return CloudHomeSectionsResult(sections = sections, errorMessage = firstError)
     }
 
     private fun ensureCollectionHeroFallback(
         addons: List<ManagedAddon>,
-        forceRefresh: Boolean,
-        refreshSources: Boolean,
+        force: Boolean,
         requestKey: String?,
     ) {
         if (!lastPublishedCatalogHeroEmpty) return
@@ -334,7 +501,7 @@ object HomeRepository {
             snapshot = snapshot,
             requestKey = requestKey,
         )
-        if (!refreshSources && collectionHeroRequestKey == nextRequestKey) return
+        if (!force && collectionHeroRequestKey == nextRequestKey) return
 
         collectionHeroJob?.cancel()
         collectionHeroRequestKey = nextRequestKey
@@ -348,12 +515,14 @@ object HomeRepository {
             val sources = collectionHeroSources(collections)
             val sourceResults = sources.map { source ->
                 async {
-                    runCatching {
-                        source.resolveCollectionHeroItems(
-                            addons = addons,
-                            forceRefresh = forceRefresh,
-                        )
-                    }.getOrDefault(emptyList())
+                    try {
+                        withTimeoutOrNull(HOME_COLLECTION_HERO_SOURCE_TIMEOUT_MS) {
+                            source.resolveCollectionHeroItems(addons)
+                        }.orEmpty()
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        emptyList()
+                    }
                 }
             }.awaitAll()
             val random = Random((nextRequestKey.hashCode()).absoluteValue + 7)
@@ -386,13 +555,10 @@ object HomeRepository {
             .flatMap { folder -> folder.resolvedSources }
             .take(HOME_COLLECTION_HERO_SOURCE_LIMIT)
 
-    private suspend fun CollectionSource.resolveCollectionHeroItems(
-        addons: List<ManagedAddon>,
-        forceRefresh: Boolean,
-    ): List<MetaPreview> {
+    private suspend fun CollectionSource.resolveCollectionHeroItems(addons: List<ManagedAddon>): List<MetaPreview> {
         val page = when {
-            isTmdb -> TmdbCollectionSourceResolver.resolve(source = this, page = 1)
-            isTrakt -> TraktPublicListSourceResolver.resolve(source = this, page = 1)
+            isTmdb -> TmdbCollectionSourceResolver.resolveOrEmpty(source = this, page = 1)
+            isTrakt -> TraktPublicListSourceResolver.resolveOrEmpty(source = this, page = 1)
             else -> {
                 val catalogSource = addonCatalogSource() ?: return emptyList()
                 val resolvedCatalog = addons.findCollectionCatalog(catalogSource) ?: return emptyList()
@@ -402,7 +568,6 @@ object HomeRepository {
                     catalogId = catalogSource.catalogId,
                     genre = catalogSource.genre,
                     maxItems = HOME_COLLECTION_HERO_SOURCE_ITEM_LIMIT,
-                    forceRefresh = forceRefresh,
                 )
             }
         }
@@ -478,9 +643,16 @@ private const val HOME_COLLECTION_HERO_SOURCE_LIMIT = 6
 private const val HOME_COLLECTION_HERO_SOURCE_ITEM_LIMIT = 8
 private const val HOME_CATALOG_FETCH_BATCH_SIZE = 4
 private const val HOME_CATALOG_PREVIEW_FETCH_LIMIT = 18
-private const val DESKTOP_HOME_CATALOG_PREVIEW_FETCH_LIMIT = 64
-private const val DESKTOP_HOME_CATALOG_PREVIEW_MAX_PAGES = 4
 private const val HOME_CATALOG_PUBLISH_INTERVAL = 2
+private const val HOME_CLOUDSTREAM_PROVIDER_SCAN_LIMIT = 18
+private const val HOME_CLOUDSTREAM_SECTION_PREVIEW_LIMIT = 8
+private const val HOME_CLOUDSTREAM_PROVIDER_TIMEOUT_MS = 5_000L
+private const val HOME_CLOUDSTREAM_TOTAL_PREVIEW_TIMEOUT_MS = 15_000L
+private const val HOME_CATALOG_REQUEST_TIMEOUT_MS = 12_000L
+private const val HOME_COLLECTION_HERO_SOURCE_TIMEOUT_MS = 10_000L
+private const val HOME_HERO_LOCALIZED_ARTWORK_BATCH_SIZE = 3
+private const val HOME_HERO_INITIAL_LOCALIZED_ARTWORK_TIMEOUT_MS = 1_500L
+private const val HOME_HERO_LOCALIZED_ARTWORK_TIMEOUT_MS = 4_000L
 
 private fun prioritizeDefinitions(
     definitions: List<HomeCatalogDefinition>,

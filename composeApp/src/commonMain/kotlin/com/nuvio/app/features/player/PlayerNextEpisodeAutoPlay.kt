@@ -1,17 +1,12 @@
 package com.nuvio.app.features.player
 
-import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.debrid.DebridSettingsRepository
-import com.nuvio.app.features.debrid.DirectDebridPlayableResult
-import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
-import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
-import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
 import com.nuvio.app.features.streams.StreamAutoPlaySource
@@ -25,28 +20,39 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
-    if (playbackSnapshotKey != activePlaybackKey || playbackSnapshot.isLoading ||
-        !initialSeekApplied || isScrubbingTimeline || errorMessage != null ||
-        isShortPlaceholderDuration(playbackSnapshot.durationMs)
-    ) return false
-    return playbackSnapshot.isEnded || PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
-        positionMs = playbackSnapshot.positionMs,
-        durationMs = playbackSnapshot.durationMs,
-        skipIntervals = skipIntervals,
-        thresholdMode = playerSettingsUiState.nextEpisodeThresholdMode,
-        thresholdPercent = playerSettingsUiState.nextEpisodeThresholdPercent,
-        thresholdMinutesBeforeEnd = playerSettingsUiState.nextEpisodeThresholdMinutesBeforeEnd,
-    )
+internal fun shouldRestrictNextEpisodeAutoPlayToBingeGroup(
+    mode: StreamAutoPlayMode,
+    autoPlayNextEpisodeEnabled: Boolean,
+    fallbackEnabled: Boolean,
+    preferBingeGroup: Boolean,
+): Boolean {
+    val shouldAutoSelectInManualMode = mode == StreamAutoPlayMode.MANUAL &&
+        (autoPlayNextEpisodeEnabled || preferBingeGroup)
+    return shouldAutoSelectInManualMode &&
+        (!autoPlayNextEpisodeEnabled || !fallbackEnabled) &&
+        preferBingeGroup
 }
 
-internal fun PlayerScreenRuntime.cancelNextEpisodeAutoPlay() {
-    nextEpisodeAutoPlayJob?.cancel()
-    nextEpisodeAutoPlayJob = null
-    nextEpisodeAutoPlayAutomatic = false
-    nextEpisodeAutoPlaySearching = false
-    nextEpisodeAutoPlaySourceName = null
-    nextEpisodeAutoPlayCountdown = null
+internal fun currentProviderNextEpisodeCandidates(
+    streams: List<StreamItem>,
+    currentProviderAddonId: String?,
+    currentProviderName: String?,
+    preferredBingeGroup: String?,
+    bingeGroupOnly: Boolean,
+): List<StreamItem> {
+    val providerStreams = streams.filter { stream ->
+        (!currentProviderAddonId.isNullOrBlank() && stream.addonId == currentProviderAddonId) ||
+            currentProviderName
+                ?.takeIf { it.isNotBlank() }
+                ?.let { stream.addonName.equals(it, ignoreCase = true) } == true
+    }
+    val providerBingeStreams = preferredBingeGroup
+        ?.takeIf { it.isNotBlank() }
+        ?.let { bingeGroup ->
+            providerStreams.filter { stream -> stream.behaviorHints.bingeGroup == bingeGroup }
+        }
+        .orEmpty()
+    return if (bingeGroupOnly) providerBingeStreams else providerBingeStreams.ifEmpty { providerStreams }
 }
 
 internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
@@ -57,6 +63,8 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     parentMetaType: String,
     contentType: String?,
     settings: PlayerSettingsUiState,
+    currentProviderAddonId: String?,
+    currentProviderName: String?,
     currentStreamBingeGroup: String?,
     onDownloadedEpisodeSelected: (DownloadItem, MetaVideo) -> Unit,
     onEpisodeStreamSelected: (StreamItem, MetaVideo) -> Unit,
@@ -65,6 +73,8 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     onSourceNameChanged: (String?) -> Unit,
     onCountdownChanged: (Int?) -> Unit,
     onNextEpisodeCardVisibleChanged: (Boolean) -> Unit,
+    prepareOnly: Boolean = false,
+    onPrepared: (StreamItem?, MetaVideo) -> Unit = { _, _ -> },
 ): Job? {
     val nextVideoId = nextEpisodeInfo?.videoId ?: return null
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
@@ -77,6 +87,10 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         videoId = nextVideo.id,
     )
     if (downloadedNextEpisode != null) {
+        if (prepareOnly) {
+            onPrepared(null, nextVideo)
+            return null
+        }
         onDownloadedEpisodeSelected(downloadedNextEpisode, nextVideo)
         return null
     }
@@ -94,11 +108,12 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                     settings.streamAutoPlayPreferBingeGroup
                 )
 
-    val bingeGroupOnlyManualMode =
-        shouldAutoSelectInManualMode &&
-            (!settings.streamAutoPlayNextEpisodeEnabled ||
-                !settings.streamAutoPlayNextEpisodeFallbackEnabled) &&
-            settings.streamAutoPlayPreferBingeGroup
+    val bingeGroupOnlyManualMode = shouldRestrictNextEpisodeAutoPlayToBingeGroup(
+        mode = settings.streamAutoPlayMode,
+        autoPlayNextEpisodeEnabled = settings.streamAutoPlayNextEpisodeEnabled,
+        fallbackEnabled = settings.streamAutoPlayNextEpisodeFallbackEnabled,
+        preferBingeGroup = settings.streamAutoPlayPreferBingeGroup,
+    )
 
     val effectiveMode = if (shouldAutoSelectInManualMode) {
         StreamAutoPlayMode.FIRST_STREAM
@@ -135,16 +150,11 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         PlayerStreamsRepository.loadEpisodeStreams(
             type = type,
             videoId = nextVideo.id,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
             season = nextVideo.season,
             episode = nextVideo.episode,
         )
-
-        if (effectiveMode == StreamAutoPlayMode.MANUAL) {
-            onSearchingChanged(false)
-            onNextEpisodeCardVisibleChanged(false)
-            onManualSelectionRequired(nextVideo)
-            return@launch
-        }
 
         val installedAddonNames = AddonRepository.uiState.value.addons
             .enabledAddons()
@@ -154,6 +164,7 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
 
         val timeoutSeconds = settings.streamAutoPlayTimeoutSeconds
         var autoSelectTriggered = false
+        var timeoutElapsed = false
         var selectedStream: StreamItem? = null
         val autoSelectSettled = CompletableDeferred<Unit>()
 
@@ -190,6 +201,17 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                 activeResolverProviderId = debridSettings.activeResolverProviderId,
             )
 
+        fun tryCurrentProviderFirst(streams: List<StreamItem>): StreamItem? {
+            val candidates = currentProviderNextEpisodeCandidates(
+                streams = streams,
+                currentProviderAddonId = currentProviderAddonId,
+                currentProviderName = currentProviderName,
+                preferredBingeGroup = preferredBingeGroup,
+                bingeGroupOnly = bingeGroupOnlyManualMode,
+            )
+            return trySelectStream(candidates)
+        }
+
         fun tryBingeGroupOnly(streams: List<StreamItem>): StreamItem? {
             if (preferredBingeGroup == null || !settings.streamAutoPlayPreferBingeGroup) return null
             return StreamAutoPlaySelector.selectAutoPlayStream(
@@ -208,23 +230,42 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             )
         }
 
-        val selectionCoordinator = NextEpisodeStreamSelectionCoordinator(
-            selectAfterDelay = ::trySelectStream,
-            selectPreferred = ::tryBingeGroupOnly,
-        )
-
-        fun applySelectionDecision(decision: NextEpisodeStreamSelectionDecision) {
-            if (autoSelectTriggered) return
-            when (decision) {
-                is NextEpisodeStreamSelectionDecision.Selected -> selectStream(decision.stream)
-                NextEpisodeStreamSelectionDecision.ManualSelection -> finishWithoutSelection()
-                NextEpisodeStreamSelectionDecision.Waiting -> Unit
-            }
-        }
-
         val innerJob = launch {
             PlayerStreamsRepository.episodeStreamsState.collectLatest { state ->
-                applySelectionDecision(selectionCoordinator.onStreamsChanged(state))
+                if (state.groups.isEmpty() && state.isAnyLoading) return@collectLatest
+
+                val allStreams = state.groups.flatMap { it.streams }
+
+                if (autoSelectTriggered) {
+                    // Already resolved.
+                } else if (timeoutElapsed) {
+                    if (allStreams.isNotEmpty()) {
+                        val candidate = tryCurrentProviderFirst(allStreams) ?: trySelectStream(allStreams)
+                        if (candidate != null) {
+                            selectStream(candidate)
+                        }
+                    }
+                } else if (allStreams.isNotEmpty()) {
+                    val earlyMatch = tryCurrentProviderFirst(allStreams) ?: tryBingeGroupOnly(allStreams)
+                    if (earlyMatch != null) {
+                        selectStream(earlyMatch)
+                    }
+                }
+
+                if (!autoSelectTriggered && !state.isAnyLoading) {
+                    if (allStreams.isNotEmpty()) {
+                        val candidate = tryCurrentProviderFirst(allStreams) ?: trySelectStream(allStreams)
+                        if (candidate != null) {
+                            selectStream(candidate)
+                        }
+                    }
+                    if (!autoSelectTriggered) {
+                        finishWithoutSelection()
+                    }
+                    return@collectLatest
+                }
+
+                if (autoSelectTriggered) return@collectLatest
             }
         }
 
@@ -233,36 +274,59 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
 
         if (isBoundedTimeout) {
             delay(timeoutMs)
-        }
-        applySelectionDecision(
-            selectionCoordinator.onSelectionDelayElapsed(PlayerStreamsRepository.episodeStreamsState.value),
-        )
-        val completed = withTimeoutOrNull(NEXT_EPISODE_HARD_TIMEOUT_MS) { autoSelectSettled.await() }
-        innerJob.cancel()
-        if (completed == null && !autoSelectTriggered) {
-            val allStreams = PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }
-            trySelectStream(allStreams)?.let(::selectStream) ?: finishWithoutSelection()
-        }
-
-        val selected = selectedStream?.let { stream ->
-            when (val result = DirectDebridPlaybackResolver.resolveToPlayableStream(stream, nextVideo.season, nextVideo.episode)) {
-                is DirectDebridPlayableResult.Success -> result.stream
-                else -> {
-                    result.toastMessage()?.let { NuvioToastController.show(it) }
-                    PlayerStreamsRepository.loadEpisodeStreams(
-                        type = type,
-                        videoId = nextVideo.id,
-                        season = nextVideo.season,
-                        episode = nextVideo.episode,
-                        forceRefresh = true,
-                    )
-                    null
+            timeoutElapsed = true
+            if (!autoSelectTriggered) {
+                val allStreams = PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }
+                if (allStreams.isNotEmpty()) {
+                    val candidate = tryCurrentProviderFirst(allStreams) ?: trySelectStream(allStreams)
+                    if (candidate != null) {
+                        selectStream(candidate)
+                    }
                 }
             }
+            if (selectedStream != null) {
+                innerJob.cancel()
+            } else if (PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }.isNotEmpty()) {
+                innerJob.cancel()
+                finishWithoutSelection()
+            } else {
+                val completed = withTimeoutOrNull(timeoutMs) { autoSelectSettled.await() }
+                innerJob.cancel()
+                if (completed == null && !autoSelectTriggered) {
+                    val allStreams = PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }
+                    if (allStreams.isNotEmpty()) {
+                        selectedStream = tryCurrentProviderFirst(allStreams) ?: trySelectStream(allStreams)
+                    }
+                    finishWithoutSelection()
+                }
+            }
+        } else {
+            timeoutElapsed = true
+            if (!autoSelectTriggered) {
+                val allStreams = PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }
+                if (allStreams.isNotEmpty()) {
+                    (tryCurrentProviderFirst(allStreams) ?: trySelectStream(allStreams))?.let(::selectStream)
+                }
+            }
+            val completed = withTimeoutOrNull(NEXT_EPISODE_HARD_TIMEOUT_MS) { autoSelectSettled.await() }
+            innerJob.cancel()
+            if (completed == null && !autoSelectTriggered) {
+                val allStreams = PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }
+                if (allStreams.isNotEmpty()) {
+                    selectedStream = tryCurrentProviderFirst(allStreams) ?: trySelectStream(allStreams)
+                }
+                finishWithoutSelection()
+            }
         }
+
         onSearchingChanged(false)
+        val selected = selectedStream
         if (selected != null) {
-            onSourceNameChanged((selected.name?.takeIf { it.isNotBlank() } ?: selected.addonName).trim())
+            onSourceNameChanged(selected.addonName)
+            if (prepareOnly) {
+                onPrepared(selected, nextVideo)
+                return@launch
+            }
             for (i in 3 downTo 1) {
                 onCountdownChanged(i)
                 delay(1000)
@@ -272,6 +336,10 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             onCountdownChanged(null)
             onSourceNameChanged(null)
         } else {
+            if (prepareOnly) {
+                onPrepared(null, nextVideo)
+                return@launch
+            }
             onManualSelectionRequired(nextVideo)
             onNextEpisodeCardVisibleChanged(false)
         }

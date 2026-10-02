@@ -1,14 +1,23 @@
 package com.nuvio.app.features.watchprogress
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.DesktopPreferences
 
-internal actual object WatchProgressStorage {
-    private val store = DesktopStorage.store("nuvio_watch_progress")
+actual object WatchProgressStorage {
+    private const val preferencesName = "nuvio_watch_progress"
+    private const val payloadKey = "watch_progress_payload"
+
+    private val preferences: DesktopPreferences? = DesktopPreferences(preferencesName)
+
+
 
     actual fun loadPayload(profileId: Int): String? =
-        store.getString("watch_progress_$profileId")
+        preferences?.getString("${payloadKey}_$profileId", null)
 
     actual fun savePayload(profileId: Int, payload: String) {
-        store.putString("watch_progress_$profileId", payload)
+        preferences
+            ?.edit()
+            ?.putString("${payloadKey}_$profileId", payload)
+            ?.apply()
     }
 }

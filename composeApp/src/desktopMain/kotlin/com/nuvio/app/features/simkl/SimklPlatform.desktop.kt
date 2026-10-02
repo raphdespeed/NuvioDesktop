@@ -46,7 +46,10 @@ internal actual object SimklAuthStorage {
         store.putString(ProfileScopedKey.of(codeVerifierKey), value)
     }
 
+    actual fun loadManualClientId(): String? = store.getString(ProfileScopedKey.of("manual_client_id"))
+    actual fun saveManualClientId(value: String?) { store.putString(ProfileScopedKey.of("manual_client_id"),value) }
     actual fun removeProfile(profileId: Int) {
+        store.remove(ProfileScopedKey.of("manual_client_id",profileId))
         store.removeAll(
             listOf(
                 ProfileScopedKey.of(metadataKey, profileId),

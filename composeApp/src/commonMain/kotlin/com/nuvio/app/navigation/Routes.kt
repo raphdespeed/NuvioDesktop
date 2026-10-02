@@ -80,10 +80,7 @@ data class MetaScreenSettingsRoute(override val title: String = "") : SettingsDe
 data class ContinueWatchingSettingsRoute(override val title: String = "") : SettingsDestinationRoute
 
 @Serializable
-data class DownloadsRoute(override val title: String = "") : AppRoute {
-    override val preferredTabName: String
-        get() = "Library"
-}
+data class DownloadsSettingsRoute(override val title: String = "") : SettingsDestinationRoute
 
 @Serializable
 data class DownloadShowRoute(

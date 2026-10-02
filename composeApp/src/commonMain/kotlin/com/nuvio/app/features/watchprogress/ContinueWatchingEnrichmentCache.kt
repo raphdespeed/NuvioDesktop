@@ -78,16 +78,9 @@ internal object ContinueWatchingEnrichmentCache {
 
     private const val storageKey = "cw_enrichment_cache"
     private val cacheLock = SynchronizedObject()
-    private val cachedPayloads = mutableMapOf<CacheScope, CachedEnrichmentPayload?>()
-    private val migratedLegacyProfileIds = mutableSetOf<Int>()
+    private val lastPayloadHashByScope = mutableMapOf<CacheScope, Int>()
     private val _generation = MutableStateFlow(0)
     val generation: StateFlow<Int> = _generation.asStateFlow()
-
-    fun warm(profileId: Int) {
-        WatchProgressSource.entries.forEach { source ->
-            loadPayload(profileId = profileId, source = source)
-        }
-    }
 
     fun getNextUpSnapshot(
         profileId: Int,
@@ -121,13 +114,14 @@ internal object ContinueWatchingEnrichmentCache {
     ): Boolean = synchronized(cacheLock) {
         if (generation != _generation.value) return@synchronized false
 
-        val payload = CachedEnrichmentPayload(nextUp = nextUp.toList(), inProgress = inProgress.toList())
+        removeLegacyPayload(profileId)
+        val payload = CachedEnrichmentPayload(nextUp = nextUp, inProgress = inProgress)
+        val payloadHash = payload.hashCode()
         val scope = CacheScope(profileId = profileId, source = source)
-        if (!force && cachedPayloads[scope] == payload) {
+        if (!force && lastPayloadHashByScope[scope] == payloadHash) {
             return@synchronized true
         }
 
-        removeLegacyPayloadOnce(profileId)
         val encoded = runCatching {
             json.encodeToString(payload)
         }.getOrNull() ?: return@synchronized false
@@ -135,7 +129,7 @@ internal object ContinueWatchingEnrichmentCache {
             continueWatchingEnrichmentStorageKey(profileId = profileId, source = source),
             encoded,
         )
-        cachedPayloads[scope] = payload
+        lastPayloadHashByScope[scope] = payloadHash
         true
     }
 
@@ -146,8 +140,8 @@ internal object ContinueWatchingEnrichmentCache {
         ContinueWatchingEnrichmentStorage.removePayload(
             continueWatchingEnrichmentStorageKey(profileId = profileId, source = source),
         )
-        removeLegacyPayloadOnce(profileId)
-        cachedPayloads.remove(CacheScope(profileId = profileId, source = source))
+        removeLegacyPayload(profileId)
+        lastPayloadHashByScope.remove(CacheScope(profileId = profileId, source = source))
         advanceGeneration()
     }
 
@@ -156,21 +150,18 @@ internal object ContinueWatchingEnrichmentCache {
             ContinueWatchingEnrichmentStorage.removePayload(
                 continueWatchingEnrichmentStorageKey(profileId = profileId, source = source),
             )
-            cachedPayloads.remove(CacheScope(profileId = profileId, source = source))
+            lastPayloadHashByScope.remove(CacheScope(profileId = profileId, source = source))
         }
-        removeLegacyPayloadOnce(profileId)
+        removeLegacyPayload(profileId)
         advanceGeneration()
     }
 
     fun clearLocalState() = synchronized(cacheLock) {
-        cachedPayloads.clear()
-        migratedLegacyProfileIds.clear()
+        lastPayloadHashByScope.clear()
         advanceGeneration()
     }
 
     fun onProfileChanged() = synchronized(cacheLock) {
-        cachedPayloads.clear()
-        migratedLegacyProfileIds.clear()
         advanceGeneration()
     }
 
@@ -178,21 +169,20 @@ internal object ContinueWatchingEnrichmentCache {
         profileId: Int,
         source: WatchProgressSource,
     ): CachedEnrichmentPayload? = synchronized(cacheLock) {
+        removeLegacyPayload(profileId)
         val scope = CacheScope(profileId = profileId, source = source)
-        if (cachedPayloads.containsKey(scope)) return@synchronized cachedPayloads[scope]
-        removeLegacyPayloadOnce(profileId)
         val raw = ContinueWatchingEnrichmentStorage.loadPayload(
             continueWatchingEnrichmentStorageKey(profileId = profileId, source = source),
         ) ?: run {
-            cachedPayloads[scope] = null
+            lastPayloadHashByScope.remove(scope)
             return@synchronized null
         }
         runCatching {
             json.decodeFromString<CachedEnrichmentPayload>(raw)
         }.getOrNull()?.also { payload ->
-            cachedPayloads[scope] = payload
+            lastPayloadHashByScope[scope] = payload.hashCode()
         } ?: run {
-            cachedPayloads[scope] = null
+            lastPayloadHashByScope.remove(scope)
             ContinueWatchingEnrichmentStorage.removePayload(
                 continueWatchingEnrichmentStorageKey(profileId = profileId, source = source),
             )
@@ -200,8 +190,7 @@ internal object ContinueWatchingEnrichmentCache {
         }
     }
 
-    private fun removeLegacyPayloadOnce(profileId: Int) {
-        if (!migratedLegacyProfileIds.add(profileId)) return
+    private fun removeLegacyPayload(profileId: Int) {
         ContinueWatchingEnrichmentStorage.removePayload(legacyStorageKey(profileId))
     }
 
