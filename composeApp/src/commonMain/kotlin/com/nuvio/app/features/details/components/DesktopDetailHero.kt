@@ -417,6 +417,7 @@ private fun DesktopHeroMetaRow(meta: MetaDetails, showOverallRatings: Boolean) {
     val metaItems = buildList {
         desktopYearLabel(meta)?.let(::add)
         desktopSeasonCountLabel(meta)?.let(::add)
+        desktopEpisodeCountLabel(meta)?.let(::add)
         formatRuntimeForDisplay(meta.runtime)?.let(::add)
     }
     val validImdbRating = meta.imdbRating

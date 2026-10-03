@@ -54,7 +54,9 @@ import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.accountSettingsContent(
     isTablet: Boolean,
+    onSwitchProfile: (() -> Unit)? = null,
 ) {
+    item { DesktopProfileStatsPanel(onSwitchProfile) }
     item {
         AccountSettingsBody(isTablet = isTablet)
     }

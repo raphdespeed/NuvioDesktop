@@ -37,3 +37,9 @@ Le logo visible affiche Nuvio Speedy sur la connexion, le chargement et les rég
 À partir de 0.4.18-speedy-pc.1, les grilles de bibliothèque et les listes « Voir tout » affichent les filtres **Tous (N)**, **Vus (N)** et **Non vus (N)**, comme sur le mobile. Les affiches, le nombre de colonnes, le défilement et les aperçus restent ceux de Desktop. Les catalogues des extensions ne sont pas filtrés par ces boutons.
 
 Les compteurs utilisent les mêmes statuts que les coches sur les affiches. Un film vu apparaît dans Vus ; une série n’y apparaît que si elle est marquée vue ou entièrement terminée. Les épisodes vus d’une série encore incomplète restent suivis individuellement dans sa fiche. Les compteurs de la vue en grille portent sur la liste et le type sélectionnés. La modification d’un statut actualise les filtres sans redémarrer l’application.
+
+## Profil et fiches de séries
+
+La version 0.4.19-speedy-pc.1 affiche les statistiques du profil dans **Paramètres → Compte** : en cours, terminés, bibliothèque, durée suivie, activité des sept derniers jours et titres à venir. Les données viennent du profil actif ; la durée connue provient de la progression de lecture et des métadonnées en cache, sans double comptage. Les genres favoris apparaissent sous la grille de statistiques.
+
+Les fiches Desktop indiquent le nombre de saisons et d’épisodes principaux selon les métadonnées disponibles, avec le même calcul que Mobile (épisodes spéciaux et doublons exclus). Les onglets Supporters et Contributeurs affichent uniquement raph de speed ; le pied de page porte « fait par raph de speed ».
