@@ -79,34 +79,7 @@ internal fun MemberBrandWordmark(
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
 ) {
-    val access by remember {
-        MemberAccessRepository.ensureStarted()
-        MemberAccessRepository.access
-    }.collectAsStateWithLifecycle()
-
-    Row(
-        modifier = modifier.height(height),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AppBrandWordmark(
-            modifier = Modifier.height(height),
-            contentDescription = contentDescription,
-        )
-        val tier = access.tier
-        AnimatedVisibility(
-            visible = tier != null,
-            enter = fadeIn(tween(360)) +
-                expandHorizontally(tween(420), expandFrom = Alignment.Start) +
-                scaleIn(tween(420), initialScale = 0.94f),
-        ) {
-            if (tier != null) {
-                MemberBadge(
-                    tier = tier,
-                    height = height,
-                )
-            }
-        }
-    }
+    AppBrandWordmark(modifier = modifier.height(height), contentDescription = contentDescription)
 }
 
 @Composable

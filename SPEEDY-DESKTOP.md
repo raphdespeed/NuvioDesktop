@@ -23,3 +23,11 @@ Les tests `DesktopLiveTvTest` vérifient les identifiants du guide, la recherche
 ```powershell
 ./gradlew.bat :composeApp:desktopTest --tests 'com.nuvio.app.features.livetv.DesktopLiveTvTest'
 ```
+
+## Connexion au compte
+
+À partir de 0.4.17-speedy-pc.1, l’installateur intègre la configuration publique du serveur de compte utilisé par Nuvio Speedy. La version précédente avait été distribuée sans cette configuration et ne pouvait pas se connecter.
+
+La création de l’installateur exige `NUVIO_SUPABASE_URL` et `NUVIO_SUPABASE_ANON_KEY` dans `local.properties` (fichier ignoré par Git) ou dans l’environnement. Le test réseau peut être activé avec `SPEEDY_VERIFY_AUTH_BACKEND=1` et vérifie uniquement les paramètres publics du serveur, sans mot de passe ni connexion à un compte personnel.
+
+Le logo visible affiche Nuvio Speedy sur la connexion, le chargement et les réglages. Le suffixe de statut de membre ne fait plus partie du nom affiché.

@@ -628,6 +628,21 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     )
 }
 
+// Never distribute a Windows account screen without its public backend configuration.
+val validateDesktopAuthConfiguration = tasks.register("validateDesktopAuthConfiguration") {
+    notCompatibleWithConfigurationCache("Validates public backend configuration before desktop packaging.")
+    doLast {
+        val url = runtimeConfigValue("NUVIO_SUPABASE_URL")
+        val key = runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY")
+        check(url.startsWith("https://") && key.isNotBlank()) {
+            "Connexion Desktop non configurée : renseigner NUVIO_SUPABASE_URL et NUVIO_SUPABASE_ANON_KEY dans local.properties ou les variables d’environnement avant de créer l’installateur."
+        }
+    }
+}
+tasks.matching {
+    it.name in setOf("createDistributable", "createReleaseDistributable", "packageExe", "packageMsi", "packageReleaseExe", "packageReleaseMsi")
+}.configureEach { dependsOn(validateDesktopAuthConfiguration) }
+
 val isMacHost = System.getProperty("os.name").contains("mac", ignoreCase = true)
 val isWindowsHost = System.getProperty("os.name").contains("win", ignoreCase = true)
 val prepareMacosTorrServerResources = tasks.register<PrepareMacosTorrServerResourcesTask>("prepareMacosTorrServerResources") {

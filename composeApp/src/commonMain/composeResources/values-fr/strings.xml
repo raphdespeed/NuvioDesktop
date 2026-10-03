@@ -1988,4 +1988,5 @@
     <string name="movie_status_rumored">Rumeur</string>
     <string name="movie_status_in_production">En production</string>
     <string name="movie_status_post_production">En post-production</string>
+    <string name="compose_auth_link_sign_in">Se connecter avec un lien</string>
 </resources>
