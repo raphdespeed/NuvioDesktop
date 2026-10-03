@@ -31,3 +31,9 @@ Les tests `DesktopLiveTvTest` vérifient les identifiants du guide, la recherche
 La création de l’installateur exige `NUVIO_SUPABASE_URL` et `NUVIO_SUPABASE_ANON_KEY` dans `local.properties` (fichier ignoré par Git) ou dans l’environnement. Le test réseau peut être activé avec `SPEEDY_VERIFY_AUTH_BACKEND=1` et vérifie uniquement les paramètres publics du serveur, sans mot de passe ni connexion à un compte personnel.
 
 Le logo visible affiche Nuvio Speedy sur la connexion, le chargement et les réglages. Le suffixe de statut de membre ne fait plus partie du nom affiché.
+
+## Bibliothèque : Tous, Vus et Non vus
+
+À partir de 0.4.18-speedy-pc.1, les grilles de bibliothèque et les listes « Voir tout » affichent les filtres **Tous (N)**, **Vus (N)** et **Non vus (N)**, comme sur le mobile. Les affiches, le nombre de colonnes, le défilement et les aperçus restent ceux de Desktop. Les catalogues des extensions ne sont pas filtrés par ces boutons.
+
+Les compteurs utilisent les mêmes statuts que les coches sur les affiches. Un film vu apparaît dans Vus ; une série n’y apparaît que si elle est marquée vue ou entièrement terminée. Les épisodes vus d’une série encore incomplète restent suivis individuellement dans sa fiche. Les compteurs de la vue en grille portent sur la liste et le type sélectionnés. La modification d’un statut actualise les filtres sans redémarrer l’application.

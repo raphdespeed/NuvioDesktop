@@ -69,6 +69,10 @@ import com.nuvio.app.core.ui.posterCardClickable
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import com.nuvio.app.isDesktop
+import com.nuvio.app.features.library.LibraryWatchFilter
+import com.nuvio.app.features.library.LibraryWatchFilterBar
+import com.nuvio.app.features.library.LibraryWatchProjection
+import com.nuvio.app.features.library.buildLibraryWatchProjection
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.PosterShape
@@ -104,6 +108,11 @@ fun CatalogScreen(
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
+    var libraryWatchFilter by remember(target) { mutableStateOf(LibraryWatchFilter.All) }
+    val watchProjection = remember(uiState.items, watchedUiState.watchedKeys, fullyWatchedSeriesKeys) {
+        buildLibraryWatchProjection(uiState.items, watchedUiState.watchedKeys, fullyWatchedSeriesKeys)
+    }
+    val visibleItems = if (target is CatalogTarget.Library) watchProjection.items(libraryWatchFilter) else uiState.items
     val initialScrollPosition = remember(
         target,
         homeCatalogSettingsUiState.hideUnreleasedContent,
@@ -251,8 +260,13 @@ fun CatalogScreen(
                         )
                     }
                 } else {
+                    if (visibleItems.isEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text("Aucun titre pour ce filtre.", Modifier.padding(vertical = 24.dp))
+                        }
+                    }
                     items(
-                        items = uiState.items.withDuplicateSafeLazyKeys { item -> item.stableKey() },
+                        items = visibleItems.withDuplicateSafeLazyKeys { item -> item.stableKey() },
                         key = { item -> item.lazyKey },
                     ) { keyedItem ->
                         val item = keyedItem.value
@@ -301,6 +315,9 @@ fun CatalogScreen(
                 pageHorizontalPadding = pageHorizontalPadding,
                 modifier = Modifier.onSizeChanged { headerHeightPx = it.height },
                 onBack = onBack,
+                watchProjection = watchProjection.takeIf { target is CatalogTarget.Library },
+                watchedFilter = libraryWatchFilter,
+                onWatchFilterSelected = { libraryWatchFilter = it },
             )
         }
     }
@@ -312,15 +329,19 @@ private fun CatalogHeader(
     subtitle: String,
     pageHorizontalPadding: Dp,
     onBack: () -> Unit,
+    watchProjection: LibraryWatchProjection?,
+    watchedFilter: LibraryWatchFilter,
+    onWatchFilterSelected: (LibraryWatchFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (LocalUseNativeNavigation.current) {
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .height(44.dp),
-        )
+        Column(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.statusBars)) {
+            Spacer(Modifier.height(44.dp))
+            if (watchProjection != null) {
+                LibraryWatchFilterBar(watchedFilter, watchProjection, onWatchFilterSelected,
+                    Modifier.padding(horizontal = pageHorizontalPadding, vertical = 8.dp))
+            }
+        }
         return
     }
 
@@ -357,6 +378,10 @@ private fun CatalogHeader(
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (watchProjection != null) {
+            Spacer(Modifier.height(12.dp))
+            LibraryWatchFilterBar(watchedFilter, watchProjection, onWatchFilterSelected)
         }
     }
 }
