@@ -35,6 +35,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.rounded.Tv
+import com.nuvio.app.features.livetv.DesktopLiveTvScreen
+import com.nuvio.app.features.livetv.LiveTvChannel
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -169,6 +172,7 @@ internal data class AppTabActions(
     val onLibraryPosterClick: ((LibraryItem) -> Unit)? = null,
     val onLibraryPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)? = null,
     val onLibrarySectionViewAllClick: ((LibrarySection, LibrarySortOption) -> Unit)? = null,
+    val onLiveTvPlay: ((LiveTvChannel) -> Unit)? = null,
     val onCloudFilePlay: ((CloudLibraryItem, CloudLibraryFile) -> Unit)? = null,
     val onConnectCloudClick: (() -> Unit)? = null,
     val onDownloadsClick: () -> Unit = {},
@@ -276,6 +280,13 @@ internal fun AppTabHost(
                     onConnectCloudClick = actions.onConnectCloudClick,
                     onDownloadsClick = actions.onDownloadsClick,
                     disintegrationRequest = state.libraryDisintegrationRequest,
+                )
+            }
+
+            AppScreenTab.LiveTv -> {
+                DesktopLiveTvScreen(
+                    modifier = Modifier.fillMaxSize(),
+                    onPlayChannel = { actions.onLiveTvPlay?.invoke(it) },
                 )
             }
 
@@ -571,6 +582,17 @@ internal fun TabletFloatingTopBar(
                         },
                     )
                     TabletTopPillItem(
+                        label = "TV en direct",
+                        selected = selectedTab == AppScreenTab.LiveTv,
+                        onClick = { onTabSelected(AppScreenTab.LiveTv) },
+                        labelFraction = labelFraction,
+                        pillHeight = pillHeight,
+                        expandedHorizontalPadding = expandedHorizontalPadding,
+                        collapsedHorizontalPadding = iconCollapsedPadding,
+                        textStyle = labelTextStyle,
+                        icon = { Icon(Icons.Rounded.Tv, "TV en direct", Modifier.size(navIconSize)) },
+                    )
+                    TabletTopPillItem(
                         label = stringResource(Res.string.compose_nav_settings),
                         selected = selectedTab == AppScreenTab.Settings,
                         onClick = { onTabSelected(AppScreenTab.Settings) },
@@ -854,6 +876,15 @@ internal fun DesktopHoverSidebar(
                         modifier = Modifier.size(DesktopSidebarIconSize),
                         tint = color,
                     )
+                }
+                DesktopSidebarItem(
+                    label = "TV en direct",
+                    selected = selectedTab == AppScreenTab.LiveTv,
+                    expanded = sidebarExpanded,
+                    onClick = { selectTab(AppScreenTab.LiveTv) },
+                ) { color ->
+                    Icon(Icons.Rounded.Tv, contentDescription = "TV en direct",
+                        modifier = Modifier.size(DesktopSidebarIconSize), tint = color)
                 }
                 DesktopSidebarItem(
                     label = stringResource(Res.string.compose_settings_page_root),
