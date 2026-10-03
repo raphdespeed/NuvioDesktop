@@ -51,6 +51,10 @@ actual object LiveTvStorage {
     }
 
     init {
+        DesktopM3uSourcesStorageBridge.read = { profile -> preferences?.getString("desktop_m3u_sources_$profile", null) }
+        DesktopM3uSourcesStorageBridge.write = { profile, data ->
+            preferences?.edit()?.putString("desktop_m3u_sources_$profile", data)?.apply()
+        }
         LiveTvEpgStorageBridge.readCache = ::readEpgCacheEntry
         LiveTvEpgStorageBridge.writeCache = ::writeEpgCacheEntry
     }

@@ -1,4 +1,4 @@
-> **Nuvio Speedy Desktop — reconstruction PC en cours.** Cette branche conserve l’interface Nuvio Desktop et y intègre les fonctions Speedy. La version PC intègre la TV en direct, les filtres Tous / Vus / Non vus, les compteurs d’épisodes et les statistiques du profil. [État du portage et utilisation](SPEEDY-DESKTOP.md). [Télécharger la version PC test](https://github.com/raphdespeed/NuvioDesktop/releases/download/v0.4.19-speedy-pc.1/Nuvio-Speedy-Desktop-PC-test.exe).
+> **Nuvio Speedy Desktop — reconstruction PC en cours.** Cette branche conserve l’interface Nuvio Desktop et y intègre les fonctions Speedy. La version PC intègre la TV en direct, les filtres Tous / Vus / Non vus, les compteurs d’épisodes et les statistiques du profil. [État du portage et utilisation](SPEEDY-DESKTOP.md). [Télécharger la version PC test](https://github.com/raphdespeed/NuvioDesktop/releases/download/v0.4.20-speedy-pc.1/Nuvio-Speedy-Desktop-PC-test.exe).
 
 <div align="center">
 

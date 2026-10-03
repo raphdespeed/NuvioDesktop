@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -33,20 +34,36 @@ internal fun DesktopLiveTvScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by LiveTvRepository.uiState.collectAsState()
-    val scope = rememberCoroutineScope()
-    val profileId = ProfileRepository.activeProfileId
-    var editSource by remember { mutableStateOf(false) }
+    val profiles by ProfileRepository.state.collectAsState()
+    val profileId = remember(profiles) { resolveLiveTvStorageProfileId() }
+    val sources by desktopM3uSourceStore.state.collectAsState()
+    var loadedProfile by remember { mutableStateOf<Int?>(null) }
+    var editSource by remember(profileId) { mutableStateOf(false) }
+    var editingSource by remember(profileId) { mutableStateOf<DesktopM3uSource?>(null) }
+    var deletingSource by remember(profileId) { mutableStateOf<DesktopM3uSource?>(null) }
+    var reload by remember { mutableIntStateOf(0) }
     var now by remember { mutableStateOf(LiveTvClock.nowEpochMs()) }
     LaunchedEffect(profileId) {
+        loadedProfile = null
         LiveTvRepository.onProfileChanged()
         val stored = LiveTvRepository.uiState.value
-        when (stored.sourceType) {
-            LiveTvSourceType.M3u -> if (stored.sourceUrl.isNotBlank()) {
-                if (stored.sourceUrl.startsWith("http")) LiveTvRepository.load(stored.sourceUrl)
-                else LiveTvRepository.loadStoredLocalPlaylist()
+        desktopM3uSourceStore.load(profileId, stored.sourceType, stored.sourceUrl, LiveTvStorage.loadLocalPlaylistData().orEmpty())
+        loadedProfile = profileId
+    }
+    LaunchedEffect(profileId, loadedProfile, sources.active, reload) {
+        if (loadedProfile != profileId) return@LaunchedEffect
+        LiveTvRepository.onProfileChanged()
+        val source = sources.active
+        if (source != null) {
+            if (source.playlistData.isNotBlank()) LiveTvRepository.loadLocalPlaylist(source.fileName.ifBlank { source.name }, source.playlistData)
+            else LiveTvRepository.load(source.url)
+        } else {
+            val stored = LiveTvRepository.uiState.value
+            when (stored.sourceType) {
+                LiveTvSourceType.M3u -> Unit
+                LiveTvSourceType.Xtream -> if (stored.xtreamSettings.isConfigured) LiveTvRepository.loadXtream(stored.xtreamSettings)
+                LiveTvSourceType.Stalker -> if (stored.stalkerSettings.isConfigured) LiveTvRepository.loadStalker(stored.stalkerSettings)
             }
-            LiveTvSourceType.Xtream -> if (stored.xtreamSettings.isConfigured) LiveTvRepository.loadXtream(stored.xtreamSettings)
-            LiveTvSourceType.Stalker -> if (stored.stalkerSettings.isConfigured) LiveTvRepository.loadStalker(stored.stalkerSettings)
         }
     }
     DisposableEffect(Unit) {
@@ -56,15 +73,26 @@ internal fun DesktopLiveTvScreen(
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = LiveTvClock.nowEpochMs() } }
     DesktopLiveTvContent(state, profileId, now, onPlayChannel,
         onToggleFavorite = LiveTvRepository::toggleFavorite,
-        onConfigureSource = { editSource = true },
-        onRefresh = { scope.launch {
-            when (state.sourceType) {
-                LiveTvSourceType.M3u -> if (state.sourceUrl.startsWith("http")) LiveTvRepository.load(state.sourceUrl) else LiveTvRepository.loadStoredLocalPlaylist()
-                LiveTvSourceType.Xtream -> LiveTvRepository.loadXtream(state.xtreamSettings)
-                LiveTvSourceType.Stalker -> LiveTvRepository.loadStalker(state.stalkerSettings)
-            }
-        } }, modifier = modifier)
-    if (editSource) TvSourceDialog(state, onDismiss = { editSource = false })
+        onConfigureSource = { editingSource = null; editSource = true },
+        onRefresh = { reload++ }, modifier = modifier,
+        sourceLists = sources.sources, activeSourceId = sources.activeId,
+        onSelectSource = { desktopM3uSourceStore.select(it.id) },
+        onEditSource = { editingSource = it; editSource = true },
+        onDeleteSource = { deletingSource = it },
+    )
+    if (editSource) TvSourceDialog(state, editingSource, onDismiss = { editSource = false },
+        onSaveM3u = { source -> desktopM3uSourceStore.save(source); editSource = false },
+        onProviderSaved = { desktopM3uSourceStore.select(null); reload++; editSource = false })
+    deletingSource?.let { source ->
+        AlertDialog(onDismissRequest = { deletingSource = null }, title = { Text("Supprimer la liste M3U ?") },
+            text = { Text("La liste « ${source.name} » sera retirée. Les autres listes seront conservées.") },
+            confirmButton = { TextButton(onClick = {
+                if (sources.activeId == source.id && sources.sources.size == 1) LiveTvRepository.disconnect()
+                desktopM3uSourceStore.remove(source.id)
+                deletingSource = null
+            }) { Text("Supprimer") } }, dismissButton = { TextButton(onClick = { deletingSource = null }) { Text("Annuler") } })
+    }
+
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -78,11 +106,16 @@ internal fun DesktopLiveTvContent(
     onConfigureSource: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    sourceLists: List<DesktopM3uSource> = emptyList(),
+    activeSourceId: String? = null,
+    onSelectSource: (DesktopM3uSource) -> Unit = {},
+    onEditSource: (DesktopM3uSource) -> Unit = {},
+    onDeleteSource: (DesktopM3uSource) -> Unit = {},
 ) {
-    var query by rememberSaveable(profileId) { mutableStateOf("") }
-    var category by rememberSaveable(profileId) { mutableStateOf("") }
-    var favoritesOnly by rememberSaveable(profileId) { mutableStateOf(false) }
-    var selectedId by rememberSaveable(profileId) { mutableStateOf<String?>(null) }
+    var query by rememberSaveable(profileId, activeSourceId) { mutableStateOf("") }
+    var category by rememberSaveable(profileId, activeSourceId) { mutableStateOf("") }
+    var favoritesOnly by rememberSaveable(profileId, activeSourceId) { mutableStateOf(false) }
+    var selectedId by rememberSaveable(profileId, activeSourceId) { mutableStateOf<String?>(null) }
     val categories = remember(state.channels) { state.channels.map { it.group }.filter { it.isNotBlank() }.distinct().sorted() }
     val filtered = remember(state.channels, state.favoriteUrls, category, favoritesOnly, query) {
         state.channels.filter { channel ->
@@ -104,7 +137,10 @@ internal fun DesktopLiveTvContent(
             }
             if (state.isLoading || state.isEpgLoading) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
             OutlinedButton(onClick = onRefresh, enabled = !state.isLoading && state.channels.isNotEmpty()) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(8.dp)); Text("Actualiser") }
-            Button(onClick = onConfigureSource) { Icon(Icons.Rounded.Settings, null); Spacer(Modifier.width(8.dp)); Text("Configurer la source") }
+            Button(onClick = onConfigureSource) { Icon(Icons.Rounded.Settings, null); Spacer(Modifier.width(8.dp)); Text("Ajouter une source") }
+        }
+        if (sourceLists.isNotEmpty()) {
+            DesktopM3uSourceSelector(sourceLists, activeSourceId, onSelectSource, onEditSource, onDeleteSource)
         }
         state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.channels.isEmpty()) {
@@ -199,22 +235,49 @@ private fun TvCategory(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TvSourceDialog(state: LiveTvUiState, onDismiss: () -> Unit) {
-    var type by remember { mutableStateOf(state.sourceType) }
-    var url by remember { mutableStateOf(state.sourceUrl.takeIf { it.startsWith("http") }.orEmpty()) }
+internal fun DesktopM3uSourceSelector(
+    sources: List<DesktopM3uSource>, activeId: String?,
+    onSelect: (DesktopM3uSource) -> Unit, onEdit: (DesktopM3uSource) -> Unit,
+    onDelete: (DesktopM3uSource) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("MES LISTES M3U", style = MaterialTheme.typography.labelLarge)
+        LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(sources, key = { it.id }) { source ->
+                FilterChip(source.id == activeId, { onSelect(source) }, label = { Text(source.name) })
+            }
+        }
+        sources.firstOrNull { it.id == activeId }?.let { source ->
+            OutlinedButton(onClick = { onEdit(source) }) { Text("Modifier") }
+            OutlinedButton(onClick = { onDelete(source) }) { Text("Supprimer") }
+        }
+    }
+}
+
+@Composable
+private fun TvSourceDialog(
+    state: LiveTvUiState, editing: DesktopM3uSource?, onDismiss: () -> Unit,
+    onSaveM3u: (DesktopM3uSource) -> Unit, onProviderSaved: () -> Unit,
+) {
+    val sourceId = remember { editing?.id ?: newDesktopM3uSourceId() }
+    var type by remember { mutableStateOf(LiveTvSourceType.M3u) }
+    var name by remember { mutableStateOf(editing?.name.orEmpty()) }
+    var url by remember { mutableStateOf(editing?.url.orEmpty()) }
+    var fileName by remember { mutableStateOf(editing?.fileName.orEmpty()) }
+    var playlistData by remember { mutableStateOf(editing?.playlistData.orEmpty()) }
     var portal by remember { mutableStateOf(state.stalkerSettings.portalUrl) }
     var mac by remember { mutableStateOf(state.stalkerSettings.macAddress) }
     var server by remember { mutableStateOf(state.xtreamSettings.serverUrl) }
-    var username by remember { mutableStateOf(if (type == LiveTvSourceType.Stalker) state.stalkerSettings.username else state.xtreamSettings.username) }
-    var password by remember { mutableStateOf(if (type == LiveTvSourceType.Stalker) state.stalkerSettings.password else state.xtreamSettings.password) }
+    var username by remember { mutableStateOf(state.xtreamSettings.username) }
+    var password by remember { mutableStateOf(state.xtreamSettings.password) }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
         Surface(Modifier.width(680.dp), shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Configurer la TV en direct", style = MaterialTheme.typography.headlineSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (editing == null) "Ajouter une source TV" else "Modifier la liste M3U", style = MaterialTheme.typography.headlineSmall)
+                if (editing == null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     LiveTvSourceType.entries.forEach { value ->
                         FilterChip(selected = type == value, enabled = !busy, onClick = {
                             type = value
@@ -226,17 +289,19 @@ private fun TvSourceDialog(state: LiveTvUiState, onDismiss: () -> Unit) {
                 }
                 when(type) {
                     LiveTvSourceType.M3u -> {
-                        OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), label = { Text("Adresse de la liste M3U") }, singleLine = true)
+                        OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Nom de la liste M3U") }, singleLine = true)
+                        OutlinedTextField(url, { url = it; playlistData = ""; fileName = "" }, Modifier.fillMaxWidth(), label = { Text("Adresse de la liste M3U") }, singleLine = true)
+                        if (fileName.isNotBlank()) Text("Fichier : $fileName")
                         OutlinedButton(enabled = !busy, onClick = {
                             scope.launch {
                                 busy = true
                                 try {
-                                    val selected = pickDesktopLiveTvPlaylist()
-                                    if (selected != null) {
-                                        val result = LiveTvRepository.loadLocalPlaylist(selected.first, selected.second)
-                                        if (result.isSuccess) onDismiss() else failure = result.exceptionOrNull()?.message
+                                    pickDesktopLiveTvPlaylist()?.let { selected ->
+                                        fileName = selected.first; playlistData = selected.second; url = ""
+                                        if (name.isBlank()) name = fileName
                                     }
-                                } catch (error: Exception) { failure = error.message ?: "Impossible d’ouvrir ce fichier." }
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                                catch (_: Exception) { failure = "Impossible d’ouvrir ce fichier." }
                                 finally { busy = false }
                             }
                         }) { Text("Importer un fichier M3U depuis le PC") }
@@ -249,26 +314,28 @@ private fun TvSourceDialog(state: LiveTvUiState, onDismiss: () -> Unit) {
                 }
                 if (type != LiveTvSourceType.M3u) {
                     OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Nom d’utilisateur") }, singleLine = true)
-                    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Mot de passe") }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation())
+                    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Mot de passe") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
                 }
                 failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    if (busy) CircularProgressIndicator(Modifier.size(24.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(enabled = !busy, onClick = onDismiss) { Text("Annuler") }
-                    Spacer(Modifier.width(12.dp))
                     Button(enabled = !busy, onClick = {
-                        scope.launch {
-                            busy = true
-                            val result = when(type) {
-                                LiveTvSourceType.M3u -> LiveTvRepository.load(url)
-                                LiveTvSourceType.Xtream -> LiveTvRepository.loadXtream(LiveTvXtreamSettings(server, username, password))
-                                LiveTvSourceType.Stalker -> LiveTvRepository.loadStalker(LiveTvStalkerSettings(portal, mac, username, password))
+                        try {
+                            when(type) {
+                                LiveTvSourceType.M3u -> onSaveM3u(DesktopM3uSource(sourceId, name.trim(), url.trim(), fileName, playlistData))
+                                LiveTvSourceType.Xtream -> {
+                                    val settings = LiveTvXtreamSettings(server.trim(), username.trim(), password)
+                                    require(settings.isConfigured) { "Renseignez le serveur, le nom d’utilisateur et le mot de passe." }
+                                    LiveTvStorage.saveXtreamSettings(settings); LiveTvStorage.saveSourceType(type); onProviderSaved()
+                                }
+                                LiveTvSourceType.Stalker -> {
+                                    val settings = LiveTvStalkerSettings(portal.trim(), mac.trim(), username.trim(), password)
+                                    require(settings.isConfigured) { "Renseignez le portail et l’adresse MAC." }
+                                    LiveTvStorage.saveStalkerSettings(settings); LiveTvStorage.saveSourceType(type); onProviderSaved()
+                                }
                             }
-                            busy = false
-                            if (result.isSuccess) onDismiss() else failure = result.exceptionOrNull()?.message
-                        }
-                    }) { Text("Charger les chaînes") }
+                        } catch (error: IllegalArgumentException) { failure = error.message }
+                    }) { Text("Enregistrer") }
                 }
             }
         }

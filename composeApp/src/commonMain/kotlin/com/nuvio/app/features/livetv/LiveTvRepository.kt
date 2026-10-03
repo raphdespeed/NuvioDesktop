@@ -127,6 +127,7 @@ object LiveTvRepository {
         return runCatching {
             if (normalizedUrl.looksLikeDirectVideoUrl()) {
                 val channel = directStreamChannel(normalizedUrl)
+                currentCoroutineContext().ensureActive()
                 LiveTvStorage.saveSourceUrl(normalizedUrl)
                 LiveTvStorage.saveLocalPlaylistData("")
                 LiveTvStorage.saveSourceType(LiveTvSourceType.M3u)
@@ -160,6 +161,7 @@ object LiveTvRepository {
             }
             val channels = playlist.channels
             require(channels.isNotEmpty()) { "Aucune chaîne lisible dans cette liste M3U." }
+            currentCoroutineContext().ensureActive()
             LiveTvStorage.saveSourceUrl(normalizedUrl)
             LiveTvStorage.saveLocalPlaylistData("")
             LiveTvStorage.saveSourceType(LiveTvSourceType.M3u)
@@ -177,6 +179,7 @@ object LiveTvRepository {
             loadEpgInBackground(normalizedUrl, playlist.epgUrls)
             channels
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             mutableUiState.value = mutableUiState.value.copy(
                 isLoading = false,
                 isLoaded = mutableUiState.value.channels.isNotEmpty(),
@@ -208,6 +211,7 @@ object LiveTvRepository {
             }
             val channels = playlist.channels
             require(channels.isNotEmpty()) { "Aucune chaîne lisible dans ce fichier M3U." }
+            currentCoroutineContext().ensureActive()
             LiveTvStorage.saveSourceUrl(displayName)
             LiveTvStorage.saveLocalPlaylistData(trimmedData)
             LiveTvStorage.saveSourceType(LiveTvSourceType.M3u)
@@ -225,6 +229,7 @@ object LiveTvRepository {
             loadEpgInBackground(displayName, playlist.epgUrls)
             channels
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             mutableUiState.value = mutableUiState.value.copy(
                 isLoading = false,
                 isLoaded = mutableUiState.value.channels.isNotEmpty(),
@@ -288,6 +293,7 @@ object LiveTvRepository {
             loadEpgInBackground(normalizedSettings.portalUrl, emptyList())
             channels
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             mutableUiState.value = mutableUiState.value.copy(
                 isLoading = false,
                 isLoaded = mutableUiState.value.channels.isNotEmpty(),
@@ -339,6 +345,7 @@ object LiveTvRepository {
             loadEpgInBackground(normalizedSettings.serverUrl, emptyList())
             channels
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             mutableUiState.value = mutableUiState.value.copy(
                 isLoading = false,
                 isLoaded = mutableUiState.value.channels.isNotEmpty(),

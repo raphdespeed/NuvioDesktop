@@ -43,3 +43,9 @@ Les compteurs utilisent les mêmes statuts que les coches sur les affiches. Un f
 La version 0.4.19-speedy-pc.1 affiche les statistiques du profil dans **Paramètres → Compte** : en cours, terminés, bibliothèque, durée suivie, activité des sept derniers jours et titres à venir. Les données viennent du profil actif ; la durée connue provient de la progression de lecture et des métadonnées en cache, sans double comptage. Les genres favoris apparaissent sous la grille de statistiques.
 
 Les fiches Desktop indiquent le nombre de saisons et d’épisodes principaux selon les métadonnées disponibles, avec le même calcul que Mobile (épisodes spéciaux et doublons exclus). Les onglets Supporters et Contributeurs affichent uniquement raph de speed ; le pied de page porte « fait par raph de speed ».
+
+## Plusieurs listes M3U
+
+La version 0.4.20-speedy-pc.1 propose plusieurs listes M3U nommées, affichées séparément dans « Mes listes M3U ». Ajoutez une source, renseignez son nom et son URL (ou importez un fichier), puis enregistrez. Cliquez sur le nom d’une liste pour ouvrir ses chaînes et son guide. Les boutons Modifier et Supprimer concernent la liste sélectionnée.
+
+La liste configurée avant cette mise à jour est reprise sous « Ma liste M3U ». Les listes et la sélection sont enregistrées localement selon le profil TV, y compris les données des fichiers importés. Les catégories, la recherche et la sélection de chaîne sont réinitialisées lors du changement de liste. Les chaînes et guides ne sont pas fusionnés. Les favoris restent ceux du profil et sont affichés parmi les chaînes de la liste active.
