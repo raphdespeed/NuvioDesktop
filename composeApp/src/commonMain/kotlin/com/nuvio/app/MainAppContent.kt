@@ -414,6 +414,7 @@ internal fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.LiveTv -> Unit
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1349,6 +1350,31 @@ internal fun MainAppContent(
                                     )
                                 },
                                 onLibrarySectionViewAllClick = onLibrarySectionViewAllClick,
+                                onLiveTvPlay = { channel ->
+                                    coroutineScope.launch {
+                                        runCatching {
+                                            val resolved = com.nuvio.app.features.livetv.LiveTvRepository.prepareForPlayback(channel)
+                                            val launch = PlayerLaunch(
+                                                profileId = activePlaybackProfileId,
+                                                title = resolved.name,
+                                                sourceUrl = resolved.streamUrl,
+                                                sourceHeaders = resolved.headers,
+                                                streamType = resolved.streamType,
+                                                poster = resolved.logoUrl,
+                                                streamTitle = resolved.name,
+                                                streamSubtitle = resolved.group,
+                                                providerName = "TV en direct",
+                                                providerAddonId = "speedy:livetv",
+                                                contentType = "livetv",
+                                                parentMetaId = "livetv:${resolved.id}",
+                                                parentMetaType = "livetv",
+                                            )
+                                            com.nuvio.app.features.livetv.LiveTvRepository.recordRecentChannel(resolved)
+                                            val launchId = PlayerLaunchStore.put(launch)
+                                            navController.navigate(PlayerRoute(launchId = launchId, title = launch.title))
+                                        }.onFailure { NuvioToastController.show(it.message ?: "Impossible de lire cette chaîne.") }
+                                    }
+                                },
                                 onCloudFilePlay = { item, file ->
                                     coroutineScope.launch {
                                         val resumeItem = WatchProgressRepository

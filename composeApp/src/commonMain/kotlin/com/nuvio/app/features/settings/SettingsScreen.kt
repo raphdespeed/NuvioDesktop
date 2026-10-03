@@ -693,6 +693,7 @@ private fun MobileSettingsScreen(
                 }
                 SettingsPage.Account -> accountSettingsContent(
                     isTablet = false,
+                    onSwitchProfile = onSwitchProfile,
                 )
                 SettingsPage.SupportersContributors -> {
                     if (AppFeaturePolicy.supportersContributorsPageEnabled) {
@@ -1148,6 +1149,7 @@ private fun TabletSettingsScreen(
                             }
                             SettingsPage.Account -> accountSettingsContent(
                                 isTablet = true,
+                                onSwitchProfile = onSwitchProfile,
                             )
                             SettingsPage.SupportersContributors -> {
                                 if (AppFeaturePolicy.supportersContributorsPageEnabled) {

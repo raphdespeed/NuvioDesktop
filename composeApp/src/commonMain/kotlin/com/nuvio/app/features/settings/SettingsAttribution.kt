@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.build.AppVersionPolicy
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_about_based_on_version_format
-import nuvio.composeapp.generated.resources.compose_about_made_with
 import nuvio.composeapp.generated.resources.compose_about_version_format
 import org.jetbrains.compose.resources.stringResource
 
@@ -38,7 +37,7 @@ internal fun SettingsAttribution(
         )
 
         Text(
-            text = stringResource(Res.string.compose_about_made_with),
+            text = "fait par raph de speed",
             modifier = Modifier.fillMaxWidth(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

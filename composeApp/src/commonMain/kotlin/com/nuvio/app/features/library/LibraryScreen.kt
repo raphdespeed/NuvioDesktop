@@ -140,6 +140,7 @@ fun LibraryScreen(
     }
     var selectedCloudItemKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedLibrarySectionKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var watchedFilter by remember { mutableStateOf(LibraryWatchFilter.All) }
     var selectedLibraryType by rememberSaveable { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -158,7 +159,7 @@ fun LibraryScreen(
     }
     val providerOrders = rememberLibraryProviderOrders(uiState.sourceMode, orderListKeys, effectiveSortOption)
     val visibleSortOption = if (providerOrders.failed) LibrarySortOption.DEFAULT else effectiveSortOption
-    val sortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders) {
+    val unfilteredSortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders) {
         if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
             sortLibrarySections(
                 sections = uiState.sections,
@@ -170,7 +171,7 @@ fun LibraryScreen(
             emptyList()
         }
     }
-    val verticalProjection = remember(
+    val unfilteredVerticalProjection = remember(
         uiState.sections,
         uiState.sourceMode,
         selectedLibrarySectionKey,
@@ -198,6 +199,20 @@ fun LibraryScreen(
             )
         }
     }
+    val watchFilterItems = if (displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
+        unfilteredVerticalProjection.entries.map { it.item.toMetaPreview() }
+    } else {
+        unfilteredSortedSections.flatMap { it.items }.map { it.toMetaPreview() }
+    }
+    val watchProjection = buildLibraryWatchProjection(watchFilterItems, watchedUiState.watchedKeys, fullyWatchedSeriesKeys)
+    val sortedSections = unfilteredSortedSections.map { section ->
+        section.copy(items = section.items.filter { item ->
+            watchedFilter.accepts(WatchingState.isPosterWatched(watchedUiState.watchedKeys, item.toMetaPreview(), fullyWatchedSeriesKeys))
+        })
+    }.filter { it.items.isNotEmpty() }
+    val verticalProjection = unfilteredVerticalProjection.copy(entries = unfilteredVerticalProjection.entries.filter { entry ->
+        watchedFilter.accepts(WatchingState.isPosterWatched(watchedUiState.watchedKeys, entry.item.toMetaPreview(), fullyWatchedSeriesKeys))
+    })
     val retryLibraryLoad: () -> Unit = {
         NetworkStatusRepository.requestRefresh(force = true)
         coroutineScope.launch {
@@ -466,6 +481,18 @@ fun LibraryScreen(
                                 modifier = libraryContentTransitionModifier()
                                     .padding(horizontal = 16.dp),
                             )
+                        }
+                        item(key = "library-watch-filters") {
+                            LibraryWatchFilterBar(
+                                selected = watchedFilter, projection = watchProjection,
+                                onSelect = { watchedFilter = it },
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
+                        if (watchProjection.items(watchedFilter).isEmpty()) {
+                            item(key = "library-watch-filter-empty") {
+                                Text("Aucun titre pour ce filtre.", Modifier.padding(horizontal = 16.dp, vertical = 24.dp))
+                            }
                         }
                         when (displaySettings.layoutMode) {
                             LibraryLayoutMode.HORIZONTAL -> librarySections(

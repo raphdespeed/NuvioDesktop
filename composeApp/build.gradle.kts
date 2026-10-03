@@ -529,7 +529,7 @@ val desktopReleaseVersionCode = (
     ?.toIntOrNull()
     ?: 1
 val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
-val windowsMsiUpgradeUuid = "395990ee-9b8a-3548-922c-e7a23a495b8d"
+val windowsMsiUpgradeUuid = "9a064d88-a3f8-4bb6-8f12-3ab738cb46ca"
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
         ?: System.getenv("NUVIO_IOS_DISTRIBUTION")
@@ -627,6 +627,21 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
         }
     )
 }
+
+// Never distribute a Windows account screen without its public backend configuration.
+val validateDesktopAuthConfiguration = tasks.register("validateDesktopAuthConfiguration") {
+    notCompatibleWithConfigurationCache("Validates public backend configuration before desktop packaging.")
+    doLast {
+        val url = runtimeConfigValue("NUVIO_SUPABASE_URL")
+        val key = runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY")
+        check(url.startsWith("https://") && key.isNotBlank()) {
+            "Connexion Desktop non configurée : renseigner NUVIO_SUPABASE_URL et NUVIO_SUPABASE_ANON_KEY dans local.properties ou les variables d’environnement avant de créer l’installateur."
+        }
+    }
+}
+tasks.matching {
+    it.name in setOf("createDistributable", "createReleaseDistributable", "packageExe", "packageMsi", "packageReleaseExe", "packageReleaseMsi")
+}.configureEach { dependsOn(validateDesktopAuthConfiguration) }
 
 val isMacHost = System.getProperty("os.name").contains("mac", ignoreCase = true)
 val isWindowsHost = System.getProperty("os.name").contains("win", ignoreCase = true)
@@ -1072,9 +1087,11 @@ if (isWindowsHost) {
         "package",
         "packageDistributionForCurrentOS",
         "packageMsi",
+        "packageExe",
         "packageUberJarForCurrentOS",
         "packageReleaseDistributionForCurrentOS",
         "packageReleaseMsi",
+        "packageReleaseExe",
         "packageReleaseUberJarForCurrentOS",
     )
     tasks.matching { it.name in desktopNativePlayerTasks }.configureEach {
@@ -1225,6 +1242,7 @@ kotlin {
             }
         }
         val desktopMain by getting {
+            dependencies { implementation("org.tukaani:xz:1.10") }
             kotlin.srcDir(fullPluginSourceDir)
             kotlin.srcDir(fullTrailerSourceDir)
             kotlin.srcDir(
@@ -1335,8 +1353,8 @@ compose.desktop {
         )
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
-            packageName = "Nuvio"
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
+            packageName = "Nuvio Speedy"
             packageVersion = desktopReleasePackageVersion
             vendor = "Nuvio Media"
             if (isMacHost) {
@@ -1392,13 +1410,13 @@ compose.desktop {
                 upgradeUuid = windowsMsiUpgradeUuid
                 shortcut = true
                 menu = true
-                menuGroup = "Nuvio"
+                menuGroup = "Nuvio Speedy"
             }
             linux {
                 iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon-transparent.png"))
                 debMaintainer = "contact@nuvio.tv"
                 shortcut = true
-                menuGroup = "Nuvio"
+                menuGroup = "Nuvio Speedy"
                 appCategory = "AudioVideo"
             }
         }

@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import com.nuvio.app.features.details.mainSeriesStats
 import com.nuvio.app.features.details.MetaDetails
 
 @Composable
@@ -30,8 +31,8 @@ internal fun desktopYearLabel(meta: MetaDetails): String? =
         ?.takeIf { it.length >= 4 }
         ?.take(4)
 
-internal fun desktopSeasonCountLabel(meta: MetaDetails): String? {
-    val seasons = meta.videos.mapNotNull { it.season }.filter { it > 0 }.toSet().size
-    if (seasons <= 0) return null
-    return if (seasons == 1) "1 Season" else "$seasons Seasons"
-}
+internal fun desktopSeasonCountLabel(meta: MetaDetails): String? =
+    meta.mainSeriesStats()?.seasonCount?.let { if (it == 1) "1 saison" else "$it saisons" }
+
+internal fun desktopEpisodeCountLabel(meta: MetaDetails): String? =
+    meta.mainSeriesStats()?.episodeCount?.let { if (it == 1) "1 épisode" else "$it épisodes" }
